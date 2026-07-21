@@ -117,12 +117,11 @@ final class VmnetBridge {
         guard let interface else {
             throw Self.error("vmnet_start_interface() rejected the configuration")
         }
-        // Bridged start can block indefinitely: on Macs with the N1 Wi-Fi
-        // chip (M5 generation), macOS 26.4–26.5 cannot bridge VMs over
-        // Wi-Fi at all and vmnet_start_interface never completes — for any
-        // app, even as root. Surface an error instead of hanging forever.
+        // vmnet_start_interface has been known to never call back on some
+        // OS/hardware combinations, which would hang the start indefinitely.
+        // Time out and surface an error instead.
         guard done.wait(timeout: .now() + 60) != .timedOut else {
-            throw Self.error("bridged networking did not start — macOS 26 cannot bridge over Wi-Fi on this Mac (N1 Wi-Fi chip); connect a USB/Thunderbolt ethernet adapter and try again")
+            throw Self.error("bridged networking did not start: vmnet timed out bringing up the interface. Try a different network interface — a USB/Thunderbolt ethernet adapter, if you have one.")
         }
         guard status == .VMNET_SUCCESS, let mac, packetSize > 0 else {
             throw Self.error("vmnet failed to start bridged interface: \(Self.describe(status))")
@@ -221,7 +220,7 @@ final class VmnetBridge {
         case .VMNET_MEM_FAILURE: return "out of memory"
         case .VMNET_INVALID_ARGUMENT: return "invalid argument (is the shared interface up?)"
         case .VMNET_SETUP_INCOMPLETE: return "setup incomplete"
-        case .VMNET_INVALID_ACCESS: return "not permitted (bridged vmnet needs macOS 26 or root)"
+        case .VMNET_INVALID_ACCESS: return "not permitted (check the virtualization entitlement)"
         case .VMNET_SHARING_SERVICE_BUSY: return "sharing service busy"
         default: return "status \(status.rawValue)"
         }

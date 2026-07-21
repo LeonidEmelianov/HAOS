@@ -78,7 +78,7 @@ final class ImageDownloader: NSObject, URLSessionDownloadDelegate {
     }
 
     private static func error(_ message: String) -> NSError {
-        NSError(domain: "HAOSMenuBar", code: 2, userInfo: [NSLocalizedDescriptionKey: message])
+        NSError(domain: "HAOS", code: 2, userInfo: [NSLocalizedDescriptionKey: message])
     }
 
     // MARK: - URLSessionDownloadDelegate

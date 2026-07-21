@@ -18,7 +18,7 @@ No Dock icon, no window to keep open — a house icon in the menu bar tells you 
 
 - **macOS 27 or later.** This is a hard floor, not a recommendation — see [Limitations](#limitations).
 - **Apple Silicon.** The app boots the `aarch64` build of Home Assistant OS.
-- A **wired network connection** is strongly recommended — see [Limitations](#limitations).
+- A **network interface that supports bridging** — Wi-Fi or Ethernet. Wired adapters are preferred automatically when both are available.
 
 ## Installing
 
@@ -63,9 +63,9 @@ CPU count and memory are adjustable and take effect the next time the VM starts.
 | Path | Contents |
 | --- | --- |
 | `~/Library/HAOS/HAOS.img` | The guest disk image |
-| `~/Library/Application Support/HAOSMenuBar/NVRAM` | EFI variable store |
-| `~/Library/Application Support/HAOSMenuBar/MachineIdentifier` | VM machine identifier |
-| `~/Library/Application Support/HAOSMenuBar/BridgedInterfaceID` | vmnet interface UUID (keeps the MAC stable) |
+| `~/Library/Application Support/HAOS/NVRAM` | EFI variable store |
+| `~/Library/Application Support/HAOS/MachineIdentifier` | VM machine identifier |
+| `~/Library/Application Support/HAOS/BridgedInterfaceID` | vmnet interface UUID (keeps the MAC stable) |
 
 The disk image is created at a 64 GiB virtual size — Home Assistant expands its data partition to fill the disk on boot, and the Supervisor's containers don't fit in the ~6 GiB the stock image ships with. The file stays sparse on APFS, so it only occupies what the guest has actually written.
 
@@ -76,8 +76,6 @@ To start over, quit the app and delete both directories.
 **macOS 27 or later is required.** Bridged `vmnet` used to need root or the Apple-gated `com.apple.vm.networking` entitlement. macOS 26 lifted that for apps holding the ordinary virtualization entitlement, which is what lets this app bridge in-process instead of shipping a privileged helper. The deployment target is set to 27 to stay on supported ground; there is no fallback path for older systems.
 
 **USB devices are not supported.** You cannot pass a Zigbee, Z-Wave or Matter USB stick through to the guest. `VZUSBDeviceConfiguration` requires a paid Apple Developer account to sign against, and it isn't wired up here regardless. Integrations that reach your devices over the network work fine — the bridged setup is specifically built for that — but anything needing a physical dongle will not. Use a network-attached coordinator (a Zigbee/Z-Wave-to-Ethernet bridge, or SkyConnect over a USB-to-IP server) instead.
-
-**Bridged networking over Wi-Fi is broken on some Macs.** On machines with the N1 Wi-Fi chip (M5 generation), macOS 26.4–26.5 cannot bridge a VM over Wi-Fi at all: `vmnet_start_interface` never returns, for any app, even as root. The app gives up after 60 seconds and tells you so rather than hanging. Connect a USB or Thunderbolt Ethernet adapter — the interface picker prefers wired adapters over Wi-Fi automatically.
 
 **Bridged mode only.** There is no NAT/shared-networking fallback. If no physical interface is available for bridging, the VM won't start.
 

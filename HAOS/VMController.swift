@@ -107,16 +107,6 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
         let base = FileManager.default.urls(for: .applicationSupportDirectory,
                                             in: .userDomainMask)[0]
         let dir = base.appendingPathComponent("HAOS", isDirectory: true)
-        // Builds before 0.1.0 kept this state under HAOSMenuBar/. Move it
-        // across rather than starting fresh: a new directory would mean a new
-        // machine identifier, an empty EFI store and a new vmnet interface
-        // UUID, so the guest would come back with a different MAC and lose
-        // its DHCP lease.
-        let legacy = base.appendingPathComponent("HAOSMenuBar", isDirectory: true)
-        if !FileManager.default.fileExists(atPath: dir.path),
-           FileManager.default.fileExists(atPath: legacy.path) {
-            try? FileManager.default.moveItem(at: legacy, to: dir)
-        }
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }()

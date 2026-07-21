@@ -22,21 +22,40 @@ No Dock icon, no window to keep open — a house icon in the menu bar tells you 
 
 ## Installing
 
-Build from source (see below), then move `HAOS.app` to `/Applications`.
-
-Autostart registers itself only when the app runs from `/Applications`, so a debug build in DerivedData won't quietly add itself to your login items. Once installed, you can turn it off under **System Settings → General → Login Items**.
-
-## Building
-
 ```sh
 git clone https://github.com/LeonidEmelianov/HAOS.git
 cd HAOS
+make install
+```
+
+That builds a Release configuration, ad-hoc signs it, installs it to `/Applications`, and launches it. No Apple Developer account is required: `com.apple.security.virtualization` is honored under an ad-hoc signature. Signing can't be skipped entirely, though — an unsigned bundle carries no entitlements and the VM won't start.
+
+If a copy is already running, the script asks it to quit and waits for the guest to shut down cleanly before replacing it.
+
+| Target | |
+| --- | --- |
+| `make install` | Build, install to `/Applications`, relaunch |
+| `make build` | Build and verify only, no install |
+| `make uninstall` | Remove the app (leaves your VM data alone) |
+| `make clean` | Delete build products |
+
+The script accepts `--no-launch` and `--build-only`, and honors `DEST_DIR` and `DEVELOPER_DIR`.
+
+Autostart registers itself only when the app runs from `/Applications`, so a debug build in DerivedData won't quietly add itself to your login items. Turn it off under **System Settings → General → Login Items**.
+
+The first launch triggers two system prompts: one to allow local network access, and a one-time authorization for bridged networking.
+
+## Building in Xcode
+
+```sh
 open HAOS.xcodeproj
 ```
 
-Set your development team in the target's Signing & Capabilities tab, then build and run. The app needs the `com.apple.security.virtualization` entitlement, which is already in `HAOS.entitlements` — an ordinary free Apple Developer account is enough to sign it.
+Set your development team in the target's Signing & Capabilities tab, then build and run.
 
-The first launch triggers two system prompts: one to allow local network access, and a one-time authorization for bridged networking.
+Build products go to `~/Library/Caches/HAOS`, deliberately outside the repo — this project is developed in a directory synced by iCloud Drive, where the file provider stamps extended attributes that make `codesign` fail with *"resource fork, Finder information, or similar detritus not allowed"*, and where build intermediates would otherwise be uploaded.
+
+There is **no GitHub Actions workflow**, and can't be one yet: HAOS targets macOS 27, the newest GitHub-hosted runner is `macos-26`, and its Xcode versions ship SDKs no newer than macOS 26.5. You cannot build against an SDK older than the deployment target. Once a macos-27 image exists, a build workflow becomes a few lines.
 
 ## Usage
 

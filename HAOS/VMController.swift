@@ -61,7 +61,7 @@ enum VMSettings {
     /// the data partition is too small for the Supervisor containers and the
     /// HA CLI never comes up. The file stays sparse on APFS, so this costs
     /// only what the guest actually writes.
-    static let diskSize: UInt64 = 64 * 1024 * 1024 * 1024 // 64 GiB
+    static let diskSize: UInt64 = 48 * 1024 * 1024 * 1024 // 48 GiB
 
     /// Guest display resolution, in pixels. The console window opens at these
     /// dimensions in *points*, so on a Retina host each framebuffer pixel is

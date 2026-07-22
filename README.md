@@ -86,7 +86,7 @@ CPU count and memory are adjustable and take effect the next time the VM starts.
 | `~/Library/Application Support/HAOS/MachineIdentifier` | VM machine identifier |
 | `~/Library/Application Support/HAOS/BridgedInterfaceID` | vmnet interface UUID (keeps the MAC stable) |
 
-The disk image is created at a 64 GiB virtual size — Home Assistant expands its data partition to fill the disk on boot, and the Supervisor's containers don't fit in the ~6 GiB the stock image ships with. The file stays sparse on APFS, so it only occupies what the guest has actually written.
+The disk image is created at a 48 GiB virtual size — Home Assistant expands its data partition to fill the disk on boot, and the Supervisor's containers don't fit in the ~6 GiB the stock image ships with. The file stays sparse on APFS, so it only occupies what the guest has actually written.
 
 To start over, quit the app and delete both directories.
 

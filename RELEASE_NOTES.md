@@ -35,7 +35,7 @@ See the [README](README.md) for the full build and usage details.
 
 ## Notes
 
-- Guest disk image: `~/Library/HAOS/HAOS.img` (64 GiB virtual, sparse on APFS).
+- Guest disk image: `~/Library/HAOS/HAOS.img` (48 GiB virtual, sparse on APFS).
 - VM state (machine identity, EFI store, vmnet interface ID): `~/Library/Application Support/HAOS/`.
 
 Home Assistant and Home Assistant OS are projects of the [Open Home Foundation](https://www.openhomefoundation.org/); this app downloads and boots their published images and is not affiliated with them.

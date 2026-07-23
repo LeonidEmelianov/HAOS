@@ -1,3 +1,25 @@
+# HAOS 0.1.1
+
+Fixes bridged networking on Macs whose built-in Ethernet port has no cable plugged in, and adds a downloadable `.dmg`.
+
+## Fixed
+
+- **Bridge interface auto-selection ignored link state.** vmnet lists a built-in Ethernet port even with nothing plugged into it, and the wired-over-Wi-Fi preference would bridge the guest onto that dead port — the VM started fine but never got a DHCP lease. On a Mac mini running on Wi-Fi this made networking silently fail. Auto-selection now only considers interfaces whose link is actually up, so a Wi-Fi-only machine bridges onto Wi-Fi, and plugging in an Ethernet cable makes the wired port win again on the next VM start.
+
+## Installing from the .dmg
+
+Requires **macOS 27 or later** on **Apple Silicon**. Download `HAOS-0.1.1.dmg` from this release, open it, and drag **HAOS** to **Applications**.
+
+The app is ad-hoc signed, not notarized, so Gatekeeper will refuse the downloaded copy until the quarantine flag is removed:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/HAOS.app
+```
+
+Then launch it once from Finder. Building from source with `make install` (see the [README](README.md)) avoids the quarantine step entirely.
+
+---
+
 # HAOS 0.1.0
 
 First release. HAOS is a macOS menu bar app that runs [Home Assistant OS](https://www.home-assistant.io/) in a virtual machine, bridged onto your local network. No Dock icon, no window to keep open — a house icon in the menu bar, and the VM starts at login.

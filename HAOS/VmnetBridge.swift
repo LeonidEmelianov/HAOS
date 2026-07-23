@@ -165,11 +165,11 @@ final class VmnetBridge {
         }
     }
 
-    /// The physical interface to bridge onto. A wired adapter (the Mac has no
-    /// built-in ethernet, so a Thunderbolt/USB one may come and go) is
-    /// preferred over Wi-Fi; within a class, the default-route interface
-    /// wins. vmnet only lists interfaces that are up, so an unplugged
-    /// adapter naturally drops out of consideration.
+    /// The physical interface to bridge onto. Only interfaces whose link is
+    /// actually up are considered — vmnet lists a built-in ethernet port even
+    /// with no cable plugged in, and bridging onto it silently yields a dead
+    /// network. Among live interfaces, wired is preferred over Wi-Fi; within
+    /// a class, the default-route interface wins.
     private static func sharedInterfaceName() throws -> String {
         var bridgeable: [String] = []
         if let list = vmnet_copy_shared_interface_list() {
@@ -179,6 +179,8 @@ final class VmnetBridge {
                 }
             }
         }
+        let store = SCDynamicStoreCreate(nil, "VmnetBridge" as CFString, nil, nil)
+        bridgeable = bridgeable.filter { linkIsActive($0, store: store) }
         var wifi = Set<String>()
         for interface in SCNetworkInterfaceCopyAll() as? [SCNetworkInterface] ?? [] {
             if SCNetworkInterfaceGetInterfaceType(interface) == kSCNetworkInterfaceTypeIEEE80211,
@@ -187,7 +189,7 @@ final class VmnetBridge {
             }
         }
         var primary: String?
-        if let store = SCDynamicStoreCreate(nil, "VmnetBridge" as CFString, nil, nil),
+        if let store,
            let global = SCDynamicStoreCopyValue(store, "State:/Network/Global/IPv4" as CFString) as? [String: Any] {
             primary = global["PrimaryInterface"] as? String
         }
@@ -196,7 +198,17 @@ final class VmnetBridge {
             if let primary, candidates.contains(primary) { return primary }
             return candidates[0]
         }
-        throw error("no physical interface available for bridged networking")
+        throw error("no physical interface with an active link available for bridged networking")
+    }
+
+    /// Whether the interface's link is up, per configd's per-interface Link
+    /// state. An interface with no state key (some virtual adapters) is
+    /// assumed live rather than silently excluded.
+    private static func linkIsActive(_ name: String, store: SCDynamicStore?) -> Bool {
+        guard let store,
+              let link = SCDynamicStoreCopyValue(store, "State:/Network/Interface/\(name)/Link" as CFString) as? [String: Any],
+              let active = link["Active"] as? Bool else { return true }
+        return active
     }
 
     // MARK: - Support

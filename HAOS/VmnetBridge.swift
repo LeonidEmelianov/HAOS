@@ -165,12 +165,44 @@ final class VmnetBridge {
         }
     }
 
-    /// The physical interface to bridge onto. Only interfaces whose link is
-    /// actually up are considered — vmnet lists a built-in ethernet port even
-    /// with no cable plugged in, and bridging onto it silently yields a dead
-    /// network. Among live interfaces, wired is preferred over Wi-Fi; within
-    /// a class, the default-route interface wins.
+    /// How long to wait for a bridgeable interface before giving up. The app
+    /// autostarts at login, which after a reboot happens well before Wi-Fi has
+    /// associated or an ethernet link has trained; failing immediately would
+    /// mean the VM never starts on exactly the launch that matters most.
+    /// The wait is event-driven, so its length costs nothing in time-to-ready —
+    /// it only bounds how long a hopeless start hangs around before erroring.
+    private static let interfaceWaitTimeout: TimeInterval = 60
+
+    /// Backstop re-check interval. Configd drives the wait; this only covers
+    /// a change vmnet sees that configd didn't post a key for.
+    private static let interfaceRecheckInterval: TimeInterval = 5
+
+    /// The physical interface to bridge onto, waiting up to
+    /// `interfaceWaitTimeout` for one to appear. Returns as soon as a
+    /// candidate is live, so a machine that is already online pays nothing and
+    /// one whose Wi-Fi is still associating starts the moment it finishes.
     private static func sharedInterfaceName() throws -> String {
+        let deadline = Date() + interfaceWaitTimeout
+        // Created before the first check so a link coming up in between still
+        // signals — the semaphore holds the wakeup rather than dropping it.
+        let watcher = NetworkChangeWatcher()
+        defer { watcher.stop() }
+        while true {
+            if let name = liveBridgeableInterface() { return name }
+            guard Date() < deadline else {
+                throw error("no physical interface with an active link available for bridged networking (waited \(Int(interfaceWaitTimeout))s for the network to come up)")
+            }
+            watcher.waitForChange(until: min(deadline, Date() + interfaceRecheckInterval))
+        }
+    }
+
+    /// Picks a physical interface to bridge onto, or nil if none is usable
+    /// right now. Only interfaces whose link is actually up are considered —
+    /// vmnet lists a built-in ethernet port even with no cable plugged in, and
+    /// bridging onto it silently yields a dead network. Among live interfaces,
+    /// wired is preferred over Wi-Fi; within a class, the default-route
+    /// interface wins.
+    private static func liveBridgeableInterface() -> String? {
         var bridgeable: [String] = []
         if let list = vmnet_copy_shared_interface_list() {
             for index in 0..<xpc_array_get_count(list) {
@@ -198,7 +230,7 @@ final class VmnetBridge {
             if let primary, candidates.contains(primary) { return primary }
             return candidates[0]
         }
-        throw error("no physical interface with an active link available for bridged networking")
+        return nil
     }
 
     /// Whether the interface's link is up, per configd's per-interface Link
@@ -242,4 +274,49 @@ final class VmnetBridge {
         NSError(domain: "VmnetBridge", code: 1,
                 userInfo: [NSLocalizedDescriptionKey: message])
     }
+}
+
+/// Blocks a thread until configd reports a network change — the per-interface
+/// Link state the bridge selects on, or the global IPv4 dictionary that names
+/// the default-route interface. Lets the start react the instant Wi-Fi
+/// associates or a cable is plugged in, instead of polling for it.
+private final class NetworkChangeWatcher {
+    private let semaphore = DispatchSemaphore(value: 0)
+    private let queue = DispatchQueue(label: "VmnetBridge.NetworkChangeWatcher")
+    private var store: SCDynamicStore?
+
+    init() {
+        var context = SCDynamicStoreContext(version: 0,
+                                            info: Unmanaged.passUnretained(self).toOpaque(),
+                                            retain: nil, release: nil, copyDescription: nil)
+        let callback: SCDynamicStoreCallBack = { _, _, info in
+            guard let info else { return }
+            Unmanaged<NetworkChangeWatcher>.fromOpaque(info).takeUnretainedValue().semaphore.signal()
+        }
+        guard let store = SCDynamicStoreCreate(nil, "HAOS.VmnetBridge" as CFString,
+                                               callback, &context) else { return }
+        SCDynamicStoreSetNotificationKeys(store,
+                                          ["State:/Network/Global/IPv4"] as CFArray,
+                                          ["State:/Network/Interface/[^/]+/Link"] as CFArray)
+        SCDynamicStoreSetDispatchQueue(store, queue)
+        self.store = store
+    }
+
+    /// Waits for the next change or until `deadline`, whichever comes first.
+    /// Signals accumulate, so a change that lands between a caller's check and
+    /// its next wait returns immediately rather than being missed.
+    func waitForChange(until deadline: Date) {
+        _ = semaphore.wait(timeout: .now() + max(0, deadline.timeIntervalSinceNow))
+    }
+
+    /// Stops delivery and drains a callback that may already be running, so
+    /// nothing touches this object after the caller lets go of it.
+    func stop() {
+        guard let store else { return }
+        SCDynamicStoreSetDispatchQueue(store, nil)
+        queue.sync {}
+        self.store = nil
+    }
+
+    deinit { stop() }
 }

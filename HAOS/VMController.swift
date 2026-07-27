@@ -242,7 +242,7 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
                             self.launch(completion: completion)
                         case .failure(let error):
                             self.stopNetwork()
-                            self.onStateChange?(.failed)
+                            self.onStateChange?(.failed(error: error.localizedDescription))
                             completion(.failure(error))
                         }
                     }
@@ -275,7 +275,7 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
                         case .failure(let error):
                             self.virtualMachine = nil
                             self.stopNetwork()
-                            self.onStateChange?(.failed)
+                            self.onStateChange?(.failed(error: error.localizedDescription))
                             completion(.failure(error))
                         }
                     }
@@ -284,7 +284,7 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
                 DispatchQueue.main.async {
                     self.virtualMachine = nil
                     self.stopNetwork()
-                    self.onStateChange?(.failed)
+                    self.onStateChange?(.failed(error: error.localizedDescription))
                     completion(.failure(error))
                 }
             }

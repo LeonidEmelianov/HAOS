@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self?.startVM()
     }
     private lazy var stopItem = ClosureMenuItem(title: "Shut Down") { [weak self] in
+        self?.cancelStartRetry()
         self?.vmController.requestStop()
     }
     private lazy var showDisplayItem = ClosureMenuItem(title: "Show Console") { [weak self] in
@@ -63,7 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         apply(.stopped(error: nil))
-        startVM()
+        startVM(userInitiated: false)
     }
 
     /// Reflects a VM state change in the menu: status line, icon and which
@@ -128,21 +129,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Menu actions
 
-    /// Starts the VM (downloading the disk image first, on first launch) and
-    /// reports failures in an alert. The menu updates via `onStateChange`.
-    private func startVM() {
+    /// Starts the VM (downloading the disk image first, on first launch).
+    /// The menu updates via `onStateChange`.
+    ///
+    /// A start the user asked for reports failure in an alert. The automatic
+    /// start at launch doesn't: after a reboot the app runs before the network
+    /// is up (and `VmnetBridge` only waits so long for it), so a first attempt
+    /// can fail for a reason that fixes itself moments later. Those attempts
+    /// retry in the background and leave the reason in the menu's status line
+    /// rather than throwing a modal at a user who may not even be at the Mac.
+    private func startVM(userInitiated: Bool = true, attempt: Int = 1) {
         guard vmState.canStart else { return }
-        vmController.start { result in
+        if userInitiated { cancelStartRetry() }
+        vmController.start { [weak self] result in
             DispatchQueue.main.async {
-                if case .failure(let error) = result {
-                    let alert = NSAlert()
-                    alert.messageText = "Failed to start Home Assistant VM"
-                    alert.informativeText = error.localizedDescription
-                    alert.alertStyle = .critical
-                    alert.runModal()
+                guard let self, case .failure(let error) = result else { return }
+                guard userInitiated else {
+                    self.scheduleStartRetry(after: attempt, error: error)
+                    return
                 }
+                let alert = NSAlert()
+                alert.messageText = "Failed to start Home Assistant VM"
+                alert.informativeText = error.localizedDescription
+                alert.alertStyle = .critical
+                alert.runModal()
             }
         }
+    }
+
+    /// Number of automatic start attempts before giving up. The network case
+    /// is already handled inside the attempt — `VmnetBridge` waits on configd
+    /// for a live interface — so these retries are the backstop for everything
+    /// else (a transient vmnet failure, a network still absent a minute in).
+    private static let startRetryLimit = 6
+
+    /// Delay between automatic start attempts.
+    private static let startRetryDelay: TimeInterval = 5
+
+    /// The scheduled retry, kept so a start or shutdown the user asks for in
+    /// the meantime can cancel it — a retry must never resurrect a VM the
+    /// user just shut down.
+    private var pendingStartRetry: DispatchWorkItem?
+
+    /// Queues another automatic start attempt, or gives up and leaves the
+    /// failure visible in the menu.
+    private func scheduleStartRetry(after attempt: Int, error: Error) {
+        guard attempt < Self.startRetryLimit else {
+            NSLog("Giving up starting the VM after %d attempts: %@",
+                  attempt, error.localizedDescription)
+            return
+        }
+        NSLog("VM start attempt %d failed (%@); retrying in %.0fs",
+              attempt, error.localizedDescription, Self.startRetryDelay)
+        let retry = DispatchWorkItem { [weak self] in
+            self?.pendingStartRetry = nil
+            self?.startVM(userInitiated: false, attempt: attempt + 1)
+        }
+        pendingStartRetry = retry
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.startRetryDelay, execute: retry)
+    }
+
+    private func cancelStartRetry() {
+        pendingStartRetry?.cancel()
+        pendingStartRetry = nil
     }
 
     /// Opens (creating on first use) the window showing the guest's display.

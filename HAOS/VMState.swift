@@ -20,7 +20,8 @@ enum VMState {
     case stopped(error: String?)
 
     /// The VM could not be started (download, configuration or boot failure).
-    case failed
+    /// `error` describes why, for the menu's status line.
+    case failed(error: String?)
 
     /// Text for the status line at the top of the menu.
     var menuTitle: String {
@@ -31,7 +32,8 @@ enum VMState {
         case .stopping: return "Stopping…"
         case .stopped(let error?): return "Stopped (error: \(error))"
         case .stopped(nil): return "Stopped"
-        case .failed: return "Failed"
+        case .failed(let error?): return "Failed: \(error)"
+        case .failed(nil): return "Failed"
         }
     }
 

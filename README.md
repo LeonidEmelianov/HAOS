@@ -96,7 +96,7 @@ To start over, quit the app and delete both directories.
 
 **USB devices are not supported.** You cannot pass a Zigbee, Z-Wave or Matter USB stick through to the guest. `VZUSBDeviceConfiguration` requires a paid Apple Developer account to sign against, and it isn't wired up here regardless. Integrations that reach your devices over the network work fine — the bridged setup is specifically built for that — but anything needing a physical dongle will not. Use a network-attached coordinator (a Zigbee/Z-Wave-to-Ethernet bridge, or SkyConnect over a USB-to-IP server) instead.
 
-**Bridged mode only.** There is no NAT/shared-networking fallback. If no physical interface is available for bridging, the VM won't start.
+**Bridged mode only.** There is no NAT/shared-networking fallback. A start waits up to a minute for an interface with an active link — the app launches at login, often before Wi-Fi has associated — and begins the moment configd reports the link up, so the wait costs nothing once the network is there. An automatic start retries a few times beyond that, but with no usable interface the VM won't start.
 
 **One VM, one image.** No snapshots, no multiple instances, no UTM import, and the image is never updated in place — Home Assistant updates itself from inside the guest, as usual.
 

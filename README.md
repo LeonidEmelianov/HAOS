@@ -37,6 +37,7 @@ If a copy is already running, the script asks it to quit and waits for the guest
 | `make install` | Build, install to `/Applications`, relaunch |
 | `make build` | Build and verify only, no install |
 | `make uninstall` | Remove the app (leaves your VM data alone) |
+| `make dmg` | Build the release `.dmg` |
 | `make clean` | Delete build products |
 
 The script accepts `--no-launch` and `--build-only`, and honors `DEST_DIR` and `DEVELOPER_DIR`.

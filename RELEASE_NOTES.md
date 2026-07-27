@@ -1,3 +1,30 @@
+# HAOS 0.1.2
+
+Fixes the VM failing to start after a Mac restart, and ships a proper installer window in the `.dmg`.
+
+## Fixed
+
+- **"No physical interface with an active link" right after a reboot.** The app starts at login, which on a fresh boot happens before Wi-Fi has associated or an Ethernet link has trained — so bridged networking found nothing to attach to and the start failed with an alert waiting on the desktop. A start now waits for a usable interface instead of giving up on the first look. The wait is event-driven: it listens to configd for interface link changes and begins the moment the link comes up, so a Mac that's already online starts exactly as fast as before.
+
+## Changed
+
+- **The automatic start at login retries quietly.** If an attempt still fails — a transient vmnet error, or a network that's more than a minute away — the app tries again a few times instead of stopping at the first failure. Only a start you asked for from the menu reports failure in an alert; an automatic one puts the reason in the menu's status line, so a Mac you aren't sitting at no longer greets you with a modal dialog. A pending retry is cancelled if you start or shut down the VM yourself.
+- **The `.dmg` has a real installer window** — the app on the left, Applications on the right, drag across. `make dmg` builds it.
+
+## Installing from the .dmg
+
+Requires **macOS 27 or later** on **Apple Silicon**. Download `HAOS-0.1.2.dmg` from this release, open it, and drag **HAOS** to **Applications**.
+
+The app is ad-hoc signed, not notarized, so Gatekeeper will refuse the downloaded copy until the quarantine flag is removed:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/HAOS.app
+```
+
+Then launch it once from Finder. Building from source with `make install` (see the [README](README.md)) avoids the quarantine step entirely.
+
+---
+
 # HAOS 0.1.1
 
 Fixes bridged networking on Macs whose built-in Ethernet port has no cable plugged in, and adds a downloadable `.dmg`.

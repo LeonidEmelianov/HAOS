@@ -1,3 +1,29 @@
+# HAOS 0.2.0
+
+Adds a shared folder: a folder on the Mac, mounted inside the guest, so Home Assistant's backups live in the Finder instead of inside the disk image.
+
+## Added
+
+- **A folder shared with Home Assistant.** Off by default. Turn on **Share a folder with Home Assistant** in Settings, pick a folder, and choose what the guest should use it as — **Backups** (the default), **Media** or **Share**. With Backups selected, every backup Home Assistant writes — manual, automatic, or the one it takes before an update — lands on the Mac, where Time Machine can reach it. Deleting a backup from the Home Assistant UI deletes the file on the Mac, and vice versa.
+
+  The folder is offered to the guest as a virtiofs share tagged `haos-shared`, and `systemd.mount-extra=haos-shared:<directory>:virtiofs:rw,nofail` is added to the guest's kernel command line, which mounts it early enough that Docker and the Supervisor see it. Nothing in Home Assistant OS mounts a virtiofs share on its own, and its root filesystem is read-only, so the kernel command line is the only durable place to ask for the mount: it lives in `cmdline.txt` on the image's FAT boot partition, which the app edits by attaching the image while the VM is stopped, and which the RAUC update hook carries across Home Assistant OS updates. `nofail` keeps a guest that boots without the share from stalling.
+
+  The guest directory is a fixed list rather than a free path on purpose — mounting over the Home Assistant configuration would hide the running instance. Whatever the guest already keeps in the directory isn't moved or deleted; it's hidden underneath the mount and reappears if you turn sharing off.
+
+## Installing from the .dmg
+
+Requires **macOS 27 or later** on **Apple Silicon**. Download `HAOS-0.2.0.dmg` from this release, open it, and drag **HAOS** to **Applications**.
+
+The app is ad-hoc signed, not notarized, so Gatekeeper will refuse the downloaded copy until the quarantine flag is removed:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/HAOS.app
+```
+
+Then launch it once from Finder. Building from source with `make install` (see the [README](README.md)) avoids the quarantine step entirely.
+
+---
+
 # HAOS 0.1.2
 
 Fixes the VM failing to start after a Mac restart, and ships a proper installer window in the `.dmg`.

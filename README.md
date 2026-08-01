@@ -10,6 +10,7 @@ No Dock icon, no window to keep open — a house icon in the menu bar tells you 
 - **Automatic first-run setup.** On first launch the app fetches the latest `haos_generic-aarch64` release from GitHub, unpacks it, and boots it. Nothing to download or convert yourself.
 - **Real LAN presence.** The guest is bridged onto your physical network via `vmnet.framework`, so it gets an address from your router's DHCP and participates in multicast — which is what mDNS, SSDP and Matter discovery need to find your devices.
 - **Stable address.** The vmnet interface ID is persisted, so the guest keeps the same MAC and therefore the same DHCP lease across restarts.
+- **A shared folder.** A folder you pick is shared into the guest over virtiofs and mounted as Home Assistant's backups, media or `/share` directory — so backups land in the Finder, and in Time Machine, instead of inside the disk image. See [Shared folder](#shared-folder).
 - **Console access.** "Show Console" opens the guest's framebuffer when you need to look at the boot log or use the HA CLI.
 - **Clean shutdown.** Quitting sends an ACPI power-button event and waits up to 30 seconds for Home Assistant to shut down properly before forcing it.
 - **Stays awake.** While the VM runs, the app holds a power assertion so an idle host doesn't freeze the guest and drop your automations.
@@ -69,7 +70,7 @@ Click the menu bar icon:
 | Shut Down | Graceful ACPI shutdown |
 | Show Console | Opens the guest's display in a window |
 | Open Web UI | Opens <http://homeassistant.local:8123> |
-| Settings… | CPU cores and memory |
+| Settings… | CPU cores, memory and the shared folder |
 | Quit | Shuts the guest down, then exits |
 
 The icon is a filled house while the VM is running and a dimmed outline otherwise.
@@ -77,6 +78,25 @@ The icon is a filled house while the VM is running and a dimmed outline otherwis
 ## Settings
 
 CPU count and memory are adjustable and take effect the next time the VM starts. Defaults are **2 cores** and **4 GiB**; the floor is 2 GiB, below which the guest runs out of memory during onboarding. Both values are clamped to what `Virtualization.framework` reports the host allows, so a setting carried over from a bigger machine can't produce an invalid configuration.
+
+### Shared folder
+
+Off by default. Turn on **Share a folder with Home Assistant** — which asks you for a folder, since there's no default one — and that folder is mounted over one of the Supervisor's directories in the guest:
+
+| Use as | Guest directory | What you get |
+| --- | --- | --- |
+| Backups *(default)* | `/mnt/data/supervisor/backup` | Every backup Home Assistant writes — manual, automatic, or the one it takes before an update — lands on the Mac. Deleting a backup in the Home Assistant UI deletes the file here, and vice versa. |
+| Media | `/mnt/data/supervisor/media` | The folder shows up in Home Assistant's media browser. |
+| Share | `/mnt/data/supervisor/share` | The folder shows up as `/share`, which add-ons read and write. |
+
+Two things make that work, both applied the next time the VM starts:
+
+- The folder is offered to the guest as a **virtiofs** share tagged `haos-shared`.
+- `systemd.mount-extra=haos-shared:<guest directory>:virtiofs:rw,nofail` is added to the guest's kernel command line, which mounts the share early enough that Docker and the Supervisor see it.
+
+Nothing in Home Assistant OS mounts a virtiofs share on its own, and its root filesystem is read-only, so the kernel command line is the only durable place to ask for the mount. It lives in `cmdline.txt` on the image's FAT boot partition — the app edits it by attaching the image while the VM is stopped, and the RAUC update hook carries the file across Home Assistant OS updates. `nofail` keeps a guest that boots without the share from stalling.
+
+Whatever the guest already keeps in that directory isn't moved or deleted; it's hidden underneath the mount, and reappears if you turn sharing off. The guest directory is a fixed list rather than a free path on purpose — mounting over the Home Assistant configuration would hide the running instance.
 
 ## Data layout
 

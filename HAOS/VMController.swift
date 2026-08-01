@@ -11,6 +11,9 @@ enum VMSettings {
 
     private static let cpuCountKey = "VMCPUCount"
     private static let memorySizeKey = "VMMemorySize"
+    private static let sharedFolderEnabledKey = "SharedFolderEnabled"
+    private static let sharedFolderPathKey = "SharedFolderPath"
+    private static let sharedFolderGuestKey = "SharedFolderGuestPath"
 
     /// CPU cores given to the guest when the user hasn't chosen otherwise.
     static let defaultCPUCount = 2
@@ -54,6 +57,91 @@ enum VMSettings {
             return min(max(stored, allowedMemorySizes.lowerBound), allowedMemorySizes.upperBound)
         }
         set { UserDefaults.standard.set(NSNumber(value: newValue), forKey: memorySizeKey) }
+    }
+
+    // MARK: - Shared folder
+
+    /// virtiofs tag the share is published under, and the name the guest
+    /// mounts it by.
+    static let sharedFolderTag = "haos-shared"
+
+    /// Which of the Supervisor's directories the share is mounted over inside
+    /// the guest. A fixed set, not a free path: the value is spliced into the
+    /// guest's kernel command line, and mounting over the wrong directory (the
+    /// Home Assistant config, say) would hide the running configuration.
+    enum GuestFolder: String, CaseIterable {
+        case backup = "/mnt/data/supervisor/backup"
+        case media = "/mnt/data/supervisor/media"
+        case share = "/mnt/data/supervisor/share"
+
+        /// Name for the Settings popup.
+        var title: String {
+            switch self {
+            case .backup: return "Backups"
+            case .media: return "Media"
+            case .share: return "Share"
+            }
+        }
+
+        /// What the folder is good for, for the caption under the popup.
+        var summary: String {
+            switch self {
+            case .backup: return "Home Assistant writes its backups here."
+            case .media: return "The folder shows up in Home Assistant's media browser."
+            case .share: return "The folder shows up as /share, which add-ons read and write."
+            }
+        }
+    }
+
+    /// Identifies our kernel parameter in the guest's command line, whatever
+    /// tag or directory it currently names — `haos-` is our own namespace, so
+    /// a share left over from an older version is cleaned up too.
+    static let sharedFolderParameterPrefix = "systemd.mount-extra=haos-"
+
+    /// Kernel parameter that has the guest's systemd mount the share at boot,
+    /// early enough that Docker and the Supervisor see it. `nofail` keeps a
+    /// guest whose share has gone away — sharing turned off, an image moved to
+    /// another Mac — from stalling its boot on a mount it can't make.
+    static var sharedFolderKernelParameter: String {
+        "systemd.mount-extra=\(sharedFolderTag):\(sharedFolderGuest.rawValue):virtiofs:rw,nofail"
+    }
+
+    /// Whether a folder on the Mac is shared with the guest. Off by default:
+    /// turning it on hides whatever the guest already keeps in the directory
+    /// the share is mounted over.
+    static var sharedFolderEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: sharedFolderEnabledKey) }
+        set { UserDefaults.standard.set(newValue, forKey: sharedFolderEnabledKey) }
+    }
+
+    /// The shared folder's location on the Mac, or nil until the user picks
+    /// one. There's no default: which folder to expose to the guest — and
+    /// where in the Finder it belongs — is the user's call, not ours.
+    static var sharedFolderURL: URL? {
+        get {
+            guard let path = UserDefaults.standard.string(forKey: sharedFolderPathKey),
+                  !path.isEmpty else { return nil }
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
+        set { UserDefaults.standard.set(newValue?.path, forKey: sharedFolderPathKey) }
+    }
+
+    /// The folder to hand the guest: nil when sharing is off or no folder has
+    /// been picked. Both the virtiofs device and the guest's mount come from
+    /// this, so they can't disagree.
+    static var activeSharedFolder: URL? {
+        sharedFolderEnabled ? sharedFolderURL : nil
+    }
+
+    /// The directory the share is mounted over in the guest. Anything stored
+    /// that isn't one of the known directories falls back to the default.
+    static var sharedFolderGuest: GuestFolder {
+        get {
+            guard let stored = UserDefaults.standard.string(forKey: sharedFolderGuestKey),
+                  let folder = GuestFolder(rawValue: stored) else { return .backup }
+            return folder
+        }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: sharedFolderGuestKey) }
     }
 
     /// Virtual disk size. HAOS ships a ~6 GiB image and expands its data
@@ -166,6 +254,7 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
                 NSLocalizedDescriptionKey: "Disk image not found at \(diskURL.path)"
             ])
         }
+        updateSharedFolderMount()
         try growDiskImage(at: diskURL, to: VMSettings.diskSize)
         let diskAttachment = try VZDiskImageStorageDeviceAttachment(url: diskURL, readOnly: false)
         configuration.storageDevices = [VZVirtioBlockDeviceConfiguration(attachment: diskAttachment)]
@@ -177,6 +266,10 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
         networkDevice.macAddress = bridge.macAddress!
         networkDevice.attachment = VZFileHandleNetworkDeviceAttachment(fileHandle: fileHandle)
         configuration.networkDevices = [networkDevice]
+
+        if let share = try sharedFolderDevice() {
+            configuration.directorySharingDevices = [share]
+        }
 
         let graphicsDevice = VZVirtioGraphicsDeviceConfiguration()
         graphicsDevice.scanouts = [
@@ -190,6 +283,40 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
 
         try configuration.validate()
         return configuration
+    }
+
+    /// The virtiofs device carrying the shared folder, or nil when there's
+    /// nothing to share. The folder is recreated if the one the user picked
+    /// has since been moved or deleted — an empty share beats a VM that
+    /// won't start.
+    private func sharedFolderDevice() throws -> VZVirtioFileSystemDeviceConfiguration? {
+        guard let url = VMSettings.activeSharedFolder else { return nil }
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+
+        let device = VZVirtioFileSystemDeviceConfiguration(tag: VMSettings.sharedFolderTag)
+        device.share = VZSingleDirectoryShare(
+            directory: VZSharedDirectory(url: url, readOnly: false))
+        return device
+    }
+
+    /// Puts the guest's kernel command line in sync with the shared-folder
+    /// setting. Offering the virtiofs device isn't enough — nothing in Home
+    /// Assistant OS mounts it on its own, and its read-only root filesystem
+    /// leaves the kernel command line as the only durable place to say so.
+    ///
+    /// A failure here is logged rather than raised: not mounting the share is
+    /// a poor reason to leave Home Assistant down. The edit is attempted again
+    /// on the next start.
+    private func updateSharedFolderMount() {
+        do {
+            try GuestBootConfig.setKernelParameter(
+                VMSettings.activeSharedFolder == nil ? nil : VMSettings.sharedFolderKernelParameter,
+                replacingPrefix: VMSettings.sharedFolderParameterPrefix,
+                imagePath: VMSettings.diskImagePath)
+        } catch {
+            NSLog("Could not update the guest's shared-folder mount: %@",
+                  error.localizedDescription)
+        }
     }
 
     // MARK: - Lifecycle

@@ -1,3 +1,32 @@
+# HAOS 0.2.1
+
+Tidies the Settings window and rebuilds the app around one file per capability. The app does the same things it did in 0.2.0.
+
+## Changed
+
+- **The Settings window has proper sections.** *System* and *Shared folder* now sit under headings with a separator between them, and the shared-folder controls — labels included — dim as a group when sharing is off, the way macOS shows controls a checkbox has switched off. The window no longer resizes under the pointer when you change what the guest uses the folder as: it reserves the height of the longest caption up front.
+- **The VM is assembled from features.** `VMController` builds only the bare machine — CPU count, memory, firmware, entropy, balloon — and every other capability is a `VMFeature` that owns everything it needs: the disk image (download, grow, attach), the network (the vmnet bridge), the shared folder (its settings, the guest's kernel command line, the virtiofs device and its own Settings UI), and the console display. Adding a capability is a new folder plus one line in the controller. Sources are grouped into `App/`, `Settings/`, `Support/` and `VM/Features/`, and the menu bar, console window and about panel moved out of `AppDelegate` into files of their own.
+- **A first launch reads as one straight line.** Downloading the image, editing the guest's boot files and building the configuration now run in sequence on the VM's own start queue instead of a chain of nested callbacks, and every state change reaches the menu on the main queue through a single funnel.
+
+## Fixed
+
+- **The menu stopped updating while the app was quitting.** Quitting replaced the handler that drives the menu, so the status line froze on whatever it last said while the guest was shutting down. It now keeps reporting until the app exits.
+- **A guest stuck part-way through shutdown could keep the app from quitting.** If the guest was neither running nor stopped when the 30-second grace period ran out, nothing finished the termination and the app stayed up. It now stops waiting and quits.
+
+## Installing from the .dmg
+
+Requires **macOS 27 or later** on **Apple Silicon**. Download `HAOS-0.2.1.dmg` from this release, open it, and drag **HAOS** to **Applications**.
+
+The app is ad-hoc signed, not notarized, so Gatekeeper will refuse the downloaded copy until the quarantine flag is removed:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/HAOS.app
+```
+
+Then launch it once from Finder. Building from source with `make install` (see the [README](README.md)) avoids the quarantine step entirely.
+
+---
+
 # HAOS 0.2.0
 
 Adds a shared folder: a folder on the Mac, mounted inside the guest, so Home Assistant's backups live in the Finder instead of inside the disk image.

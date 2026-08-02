@@ -4,6 +4,12 @@ A menu bar app that runs [Home Assistant OS](https://www.home-assistant.io/insta
 
 No Dock icon, no window to keep open — a house icon in the menu bar tells you whether Home Assistant is up, and the VM starts automatically at login.
 
+## Demo
+
+A first launch on a Mac with nothing installed: HAOS fetches the latest Home Assistant OS release, unpacks it, boots the guest, and Home Assistant answers at `homeassistant.local:8123`. Just over two minutes, start to finish — the clock in the corner counts real time, and the quiet stretches are sped up (the video says by how much).
+
+<video src="https://raw.githubusercontent.com/LeonidEmelianov/HAOS/main/docs/demo.mp4" poster="https://raw.githubusercontent.com/LeonidEmelianov/HAOS/main/docs/demo-poster.jpg" controls muted playsinline width="900"></video>
+
 ## Features
 
 - **One-click start.** The VM boots when the app launches; a menu item starts and stops it by hand.

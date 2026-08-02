@@ -94,7 +94,7 @@ enum GuestBootConfig {
             .compactMap({ $0.split(separator: "\t").first?.trimmingCharacters(in: .whitespaces) })
             .first(where: { $0.hasPrefix("/dev/disk") })
         else {
-            throw error("Attaching \(path) produced no disk device")
+            throw HAOSError("Attaching \(path) produced no disk device")
         }
         do {
             return AttachedImage(wholeDisk: wholeDisk,
@@ -114,7 +114,7 @@ enum GuestBootConfig {
         guard let boot = partitions.first(where: { $0["VolumeName"] as? String == bootVolumeName }),
               let identifier = boot["DeviceIdentifier"] as? String
         else {
-            throw error("No \(bootVolumeName) partition on \(wholeDisk)")
+            throw HAOSError("No \(bootVolumeName) partition on \(wholeDisk)")
         }
         return "/dev/" + identifier
     }
@@ -145,13 +145,9 @@ enum GuestBootConfig {
         guard process.terminationStatus == 0 else {
             let message = String(data: standardError, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            throw error("\((launchPath as NSString).lastPathComponent) \(arguments.first ?? "") "
+            throw HAOSError("\((launchPath as NSString).lastPathComponent) \(arguments.first ?? "") "
                         + "failed (\(process.terminationStatus)): \(message)")
         }
         return String(data: standardOutput, encoding: .utf8) ?? ""
-    }
-
-    private static func error(_ message: String) -> Error {
-        NSError(domain: "HAOS", code: 2, userInfo: [NSLocalizedDescriptionKey: message])
     }
 }

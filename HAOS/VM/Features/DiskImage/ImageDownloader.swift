@@ -5,8 +5,8 @@ import Compression
 /// exists locally: resolves the newest release, fetches the
 /// haos_generic-aarch64-*.img.xz asset, decompresses it in-process (Apple's
 /// Compression framework decodes the xz container), and moves the result to
-/// its final path. VMController grows the image to its full virtual disk
-/// size before attaching it.
+/// its final path. `DiskImageVMFeature` grows the image to its full virtual
+/// disk size before attaching it.
 final class ImageDownloader: NSObject, URLSessionDownloadDelegate {
     private let releasesAPI = URL(string: "https://api.github.com/repos/home-assistant/operating-system/releases/latest")!
 
@@ -32,11 +32,26 @@ final class ImageDownloader: NSObject, URLSessionDownloadDelegate {
         self.destination = destination
     }
 
-    /// Resolves the latest release and downloads its image. `progress`
-    /// receives ready-to-display status text; both callbacks arrive on
-    /// arbitrary background queues.
-    func downloadLatestImage(progress: @escaping (String) -> Void,
-                             completion: @escaping (Result<Void, Error>) -> Void) {
+    /// Resolves the latest release, downloads its image and installs it,
+    /// blocking until it's in place or the attempt has failed. `progress`
+    /// receives ready-to-display status text on an arbitrary background queue.
+    ///
+    /// Callers are VM starts, which already run off the main thread. URLSession
+    /// does its work on queues of its own, so nothing here waits on the
+    /// caller's thread.
+    func downloadLatestImage(progress: @escaping (String) -> Void) throws {
+        let done = DispatchSemaphore(value: 0)
+        var outcome: Result<Void, Error> = .failure(HAOSError("The image download never finished"))
+        downloadLatestImage(progress: progress) { result in
+            outcome = result
+            done.signal()
+        }
+        done.wait()
+        try outcome.get()
+    }
+
+    private func downloadLatestImage(progress: @escaping (String) -> Void,
+                                     completion: @escaping (Result<Void, Error>) -> Void) {
         self.progress = progress
         self.completion = completion
         try? FileManager.default.createDirectory(at: destination.deletingLastPathComponent(),
@@ -52,7 +67,7 @@ final class ImageDownloader: NSObject, URLSessionDownloadDelegate {
             guard let data,
                   let release = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let assets = release["assets"] as? [[String: Any]] else {
-                self.finish(.failure(Self.error("Could not parse the GitHub release feed")))
+                self.finish(.failure(HAOSError("Could not parse the GitHub release feed")))
                 return
             }
             guard let asset = assets.first(where: { asset in
@@ -60,7 +75,7 @@ final class ImageDownloader: NSObject, URLSessionDownloadDelegate {
                 return name.hasPrefix("haos_generic-aarch64-") && name.hasSuffix(".img.xz")
             }), let urlString = asset["browser_download_url"] as? String,
                let downloadURL = URL(string: urlString) else {
-                self.finish(.failure(Self.error("No generic-aarch64 image in the latest release")))
+                self.finish(.failure(HAOSError("No generic-aarch64 image in the latest release")))
                 return
             }
             self.progress?("Downloading image… 0%")
@@ -75,10 +90,6 @@ final class ImageDownloader: NSObject, URLSessionDownloadDelegate {
         completion?(result)
         completion = nil
         progress = nil
-    }
-
-    private static func error(_ message: String) -> NSError {
-        NSError(domain: "HAOS", code: 2, userInfo: [NSLocalizedDescriptionKey: message])
     }
 
     // MARK: - URLSessionDownloadDelegate
@@ -144,7 +155,7 @@ final class ImageDownloader: NSObject, URLSessionDownloadDelegate {
                                         src_size: 0, state: nil)
         guard compression_stream_init(&stream, COMPRESSION_STREAM_DECODE, COMPRESSION_LZMA)
                 == COMPRESSION_STATUS_OK else {
-            throw Self.error("Could not initialize xz decompression")
+            throw HAOSError("Could not initialize xz decompression")
         }
         defer { compression_stream_destroy(&stream) }
 
@@ -181,7 +192,7 @@ final class ImageDownloader: NSObject, URLSessionDownloadDelegate {
             stream.dst_size = bufferSize
             status = compression_stream_process(&stream, flags)
             guard status != COMPRESSION_STATUS_ERROR else {
-                throw Self.error("The downloaded image failed to decompress")
+                throw HAOSError("The downloaded image failed to decompress")
             }
             let produced = bufferSize - stream.dst_size
             if produced > 0 {

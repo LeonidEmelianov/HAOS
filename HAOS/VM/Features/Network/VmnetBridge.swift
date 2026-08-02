@@ -16,9 +16,13 @@ import vmnet
 /// router DHCP, link-local IPv6 and multicast — which is what Matter and
 /// mDNS/SSDP discovery need.
 final class VmnetBridge {
-    /// MAC assigned by vmnet, derived from the persisted interface UUID.
-    /// The guest NIC must use exactly this address or vmnet drops its frames.
-    private(set) var macAddress: VZMACAddress?
+    /// What the guest's NIC needs from a running bridge: the socket to attach
+    /// to it, and the MAC address vmnet assigned — frames from any other
+    /// address are dropped, so the NIC has to use exactly this one.
+    struct Connection {
+        let fileHandle: FileHandle
+        let macAddress: VZMACAddress
+    }
 
     /// All vmnet callbacks, socket reads and the shared packet buffer are
     /// confined to this serial queue.
@@ -29,12 +33,12 @@ final class VmnetBridge {
     private var packetBuffer: UnsafeMutableRawPointer?
     private var maxPacketSize = 0
 
-    /// Starts a vmnet interface bridged onto the physical LAN and returns
-    /// the VM's end of the socketpair for VZFileHandleNetworkDeviceAttachment.
-    func start(stateDirectory: URL) throws -> FileHandle {
+    /// Starts a vmnet interface bridged onto the physical LAN and returns the
+    /// VM's end of the socketpair for VZFileHandleNetworkDeviceAttachment.
+    func start(stateDirectory: URL) throws -> Connection {
         var fds: [Int32] = [0, 0]
         guard socketpair(AF_UNIX, SOCK_DGRAM, 0, &fds) == 0 else {
-            throw Self.error("socketpair() failed: \(String(cString: strerror(errno)))")
+            throw HAOSError("socketpair() failed: \(String(cString: strerror(errno)))")
         }
         let vmSide = fds[0], hostSide = fds[1]
         // Default socket buffers are too small for virtio traffic and drop frames.
@@ -47,8 +51,9 @@ final class VmnetBridge {
         // frames when the buffer is full is normal ethernet behavior.
         _ = fcntl(hostSide, F_SETFL, fcntl(hostSide, F_GETFL) | O_NONBLOCK)
 
+        let macAddress: VZMACAddress
         do {
-            try startInterface(interfaceID: interfaceID(stateDirectory: stateDirectory))
+            macAddress = try startInterface(interfaceID: interfaceID(stateDirectory: stateDirectory))
         } catch {
             close(vmSide)
             close(hostSide)
@@ -67,7 +72,8 @@ final class VmnetBridge {
         source.resume()
         socketSource = source
 
-        return FileHandle(fileDescriptor: vmSide, closeOnDealloc: true)
+        return Connection(fileHandle: FileHandle(fileDescriptor: vmSide, closeOnDealloc: true),
+                          macAddress: macAddress)
     }
 
     /// Stops the vmnet interface and releases the socketpair and buffers.
@@ -88,9 +94,9 @@ final class VmnetBridge {
 
     // MARK: - vmnet interface
 
-    /// Brings up the bridged vmnet interface and records the MAC address and
-    /// maximum packet size it hands back.
-    private func startInterface(interfaceID: UUID) throws {
+    /// Brings up the bridged vmnet interface, records the maximum packet size
+    /// it hands back and returns the MAC address it assigned.
+    private func startInterface(interfaceID: UUID) throws -> VZMACAddress {
         let desc = xpc_dictionary_create(nil, nil, 0)
         xpc_dictionary_set_uint64(desc, vmnet_operation_mode_key, UInt64(operating_modes_t.VMNET_BRIDGED_MODE.rawValue))
         xpc_dictionary_set_string(desc, vmnet_shared_interface_name_key, try Self.sharedInterfaceName())
@@ -115,21 +121,25 @@ final class VmnetBridge {
             done.signal()
         }
         guard let interface else {
-            throw Self.error("vmnet_start_interface() rejected the configuration")
+            throw HAOSError("vmnet_start_interface() rejected the configuration")
         }
         // vmnet_start_interface has been known to never call back on some
         // OS/hardware combinations, which would hang the start indefinitely.
         // Time out and surface an error instead.
-        guard done.wait(timeout: .now() + 60) != .timedOut else {
-            throw Self.error("bridged networking did not start: vmnet timed out bringing up the interface. Try a different network interface — a USB/Thunderbolt ethernet adapter, if you have one.")
+        guard done.wait(timeout: .now() + Self.interfaceStartTimeout) != .timedOut else {
+            throw HAOSError("bridged networking did not start: vmnet timed out bringing up the interface. Try a different network interface — a USB/Thunderbolt ethernet adapter, if you have one.")
         }
         guard status == .VMNET_SUCCESS, let mac, packetSize > 0 else {
-            throw Self.error("vmnet failed to start bridged interface: \(Self.describe(status))")
+            throw HAOSError("vmnet failed to start bridged interface: \(Self.describe(status))")
         }
         self.interface = interface
-        self.macAddress = mac
         self.maxPacketSize = packetSize
+        return mac
     }
+
+    /// How long to wait for `vmnet_start_interface` to call back before
+    /// treating the start as hung.
+    private static let interfaceStartTimeout: TimeInterval = 60
 
     /// vmnet → guest: drain everything vmnet has queued, one datagram per
     /// ethernet frame. Runs on `queue`.
@@ -190,7 +200,7 @@ final class VmnetBridge {
         while true {
             if let name = liveBridgeableInterface() { return name }
             guard Date() < deadline else {
-                throw error("no physical interface with an active link available for bridged networking (waited \(Int(interfaceWaitTimeout))s for the network to come up)")
+                throw HAOSError("no physical interface with an active link available for bridged networking (waited \(Int(interfaceWaitTimeout))s for the network to come up)")
             }
             watcher.waitForChange(until: min(deadline, Date() + interfaceRecheckInterval))
         }
@@ -269,54 +279,4 @@ final class VmnetBridge {
         default: return "status \(status.rawValue)"
         }
     }
-
-    private static func error(_ message: String) -> NSError {
-        NSError(domain: "VmnetBridge", code: 1,
-                userInfo: [NSLocalizedDescriptionKey: message])
-    }
-}
-
-/// Blocks a thread until configd reports a network change — the per-interface
-/// Link state the bridge selects on, or the global IPv4 dictionary that names
-/// the default-route interface. Lets the start react the instant Wi-Fi
-/// associates or a cable is plugged in, instead of polling for it.
-private final class NetworkChangeWatcher {
-    private let semaphore = DispatchSemaphore(value: 0)
-    private let queue = DispatchQueue(label: "VmnetBridge.NetworkChangeWatcher")
-    private var store: SCDynamicStore?
-
-    init() {
-        var context = SCDynamicStoreContext(version: 0,
-                                            info: Unmanaged.passUnretained(self).toOpaque(),
-                                            retain: nil, release: nil, copyDescription: nil)
-        let callback: SCDynamicStoreCallBack = { _, _, info in
-            guard let info else { return }
-            Unmanaged<NetworkChangeWatcher>.fromOpaque(info).takeUnretainedValue().semaphore.signal()
-        }
-        guard let store = SCDynamicStoreCreate(nil, "HAOS.VmnetBridge" as CFString,
-                                               callback, &context) else { return }
-        SCDynamicStoreSetNotificationKeys(store,
-                                          ["State:/Network/Global/IPv4"] as CFArray,
-                                          ["State:/Network/Interface/[^/]+/Link"] as CFArray)
-        SCDynamicStoreSetDispatchQueue(store, queue)
-        self.store = store
-    }
-
-    /// Waits for the next change or until `deadline`, whichever comes first.
-    /// Signals accumulate, so a change that lands between a caller's check and
-    /// its next wait returns immediately rather than being missed.
-    func waitForChange(until deadline: Date) {
-        _ = semaphore.wait(timeout: .now() + max(0, deadline.timeIntervalSinceNow))
-    }
-
-    /// Stops delivery and drains a callback that may already be running, so
-    /// nothing touches this object after the caller lets go of it.
-    func stop() {
-        guard let store else { return }
-        SCDynamicStoreSetDispatchQueue(store, nil)
-        queue.sync {}
-        self.store = nil
-    }
-
-    deinit { stop() }
 }

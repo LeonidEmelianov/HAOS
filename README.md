@@ -57,6 +57,19 @@ Set your development team in the target's Signing & Capabilities tab, then build
 
 Build products go to `~/Library/Caches/HAOS`, deliberately outside the repo — this project is developed in a directory synced by iCloud Drive, where the file provider stamps extended attributes that make `codesign` fail with *"resource fork, Finder information, or similar detritus not allowed"*, and where build intermediates would otherwise be uploaded.
 
+### Project layout
+
+```
+HAOS/
+  App/       menu bar, console window, about panel, entry point
+  Settings/  the Settings window and its grid
+  Support/   small shared pieces (errors, sleep assertion, menu items)
+  VM/        VMController, VM state, the VMFeature protocol
+    Features/DiskImage, Network, SharedFolder, Display
+```
+
+`VMController` builds only the bare machine — CPUs, memory, firmware. Everything else the guest has is a `VMFeature`: one folder holding that capability's settings, its host-side work, the devices it adds to the machine, and any UI of its own. Adding a capability means adding a folder and one line in `VMController.features`, not another branch in the controller.
+
 There is **no GitHub Actions workflow**, and can't be one yet: HAOS targets macOS 27, the newest GitHub-hosted runner is `macos-26`, and its Xcode versions ship SDKs no newer than macOS 26.5. You cannot build against an SDK older than the deployment target. Once a macos-27 image exists, a build workflow becomes a few lines.
 
 ## Usage

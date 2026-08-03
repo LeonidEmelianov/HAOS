@@ -8,9 +8,16 @@ No Dock icon, no window to keep open — a house icon in the menu bar tells you 
 
 A first launch on a Mac with nothing installed: HAOS fetches the latest Home Assistant OS release, unpacks it, boots the guest, and Home Assistant answers at `homeassistant.local:8123` — just over two minutes, start to finish.
 
-[![HAOS on a first launch: the image downloading in the menu bar, then Home Assistant's welcome screen](docs/demo-preview.gif)](docs/demo.mp4)
+![HAOS on a first launch: the image downloading in the menu bar, then Home Assistant's welcome screen](docs/demo-preview.gif)
 
-That loop is the two ends of it. The full cut — [`docs/demo.mp4`](docs/demo.mp4), a minute long — also has the guest booting in the console and Home Assistant preparing itself, with a clock counting the recording's real elapsed time and a marker whenever a quiet stretch is sped up. GitHub can't play video inside a page, so the link downloads it.
+<details>
+<summary><b>Full demo</b> — the whole run, a minute long</summary>
+
+The loop above is the two ends of it. Here it is start to finish: the download and unpack in the menu, the guest booting in the console, Home Assistant preparing itself, and the welcome screen it lands on. The clock counts the recording's real elapsed time, and a marker appears whenever a quiet stretch is sped up. (The same cut is in the repo as [`docs/demo.mp4`](docs/demo.mp4).)
+
+https://github.com/user-attachments/assets/f0c7adba-33de-4805-9fd0-e745f56d1ffa
+
+</details>
 
 ## Features
 

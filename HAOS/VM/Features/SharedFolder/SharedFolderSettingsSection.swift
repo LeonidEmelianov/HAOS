@@ -1,9 +1,10 @@
 import AppKit
 
 /// The shared-folder section of the Settings window: the on/off checkbox, the
-/// folder picker, the popup choosing where the guest mounts it, and the
-/// caption explaining what that means. Lives with the rest of the feature, so
-/// the window only has to place the rows it hands back.
+/// folder picker, the popup choosing where the guest mounts it, the read-only
+/// checkbox, and the caption explaining what that combination means. Lives with
+/// the rest of the feature, so the window only has to place the rows it hands
+/// back.
 ///
 /// Selections are written to `SharedFolderSettings` immediately (no OK button,
 /// per macOS convention) and take effect the next time the VM starts.
@@ -20,6 +21,10 @@ final class SharedFolderSettingsSection {
     private lazy var chooseButton = NSButton(
         title: "Choose…", target: self, action: #selector(chooseFolder))
     private let guestFolderPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+    private lazy var readOnlyCheckbox = NSButton(
+        checkboxWithTitle: "Read-only",
+        target: self,
+        action: #selector(toggleReadOnly))
     private let note = SettingsLabel.wrappingCaption("", width: noteWidth)
     private let folderLabel = NSTextField(labelWithString: "Folder:")
     private let guestFolderLabel = NSTextField(labelWithString: "Use as:")
@@ -44,6 +49,7 @@ final class SharedFolderSettingsSection {
             .control(checkbox),
             .field(label: folderLabel, control: folderRow),
             .field(label: guestFolderLabel, control: guestFolderPopUp),
+            .control(readOnlyCheckbox),
             .caption(note),
         ]
     }()
@@ -71,6 +77,7 @@ final class SharedFolderSettingsSection {
     private func updateControls() {
         let enabled = SharedFolderSettings.isEnabled
         let guestFolder = SharedFolderSettings.guestFolder
+        let readOnly = SharedFolderSettings.isReadOnly
         checkbox.state = enabled ? .on : .off
         if let url = SharedFolderSettings.folderURL {
             pathLabel.stringValue = (url.path as NSString).abbreviatingWithTildeInPath
@@ -80,7 +87,9 @@ final class SharedFolderSettingsSection {
         chooseButton.isEnabled = enabled
         guestFolderPopUp.isEnabled = enabled
         guestFolderPopUp.selectItem(withTitle: guestFolder.title)
-        note.stringValue = Self.noteText(for: guestFolder)
+        readOnlyCheckbox.isEnabled = enabled
+        readOnlyCheckbox.state = readOnly ? .on : .off
+        note.stringValue = Self.noteText(for: guestFolder, readOnly: readOnly)
 
         // Dimming the whole sub-section, labels included, is how macOS shows
         // controls that the checkbox above them has switched off.
@@ -103,6 +112,11 @@ final class SharedFolderSettingsSection {
                 SharedFolderSettings.isEnabled = false
             }
         }
+    }
+
+    @objc private func toggleReadOnly() {
+        SharedFolderSettings.isReadOnly = readOnlyCheckbox.state == .on
+        updateControls()
     }
 
     @objc private func chooseFolder() {
@@ -131,21 +145,24 @@ final class SharedFolderSettingsSection {
     }
 
     /// Height of the tallest caption, so the window can be sized once for
-    /// whichever guest folder the user picks. Measured with a label configured
-    /// like the real one rather than with `boundingRect`, which wraps text on
-    /// its own terms and comes up a line short.
+    /// whichever guest folder and access the user picks. Measured with a label
+    /// configured like the real one rather than with `boundingRect`, which
+    /// wraps text on its own terms and comes up a line short.
     private static var tallestNoteHeight: CGFloat {
         let ruler = SettingsLabel.wrappingCaption("", width: noteWidth)
-        let heights = SharedFolderSettings.GuestFolder.allCases.map { folder -> CGFloat in
-            ruler.stringValue = noteText(for: folder)
-            return ruler.sizeThatFits(
-                NSSize(width: noteWidth, height: .greatestFiniteMagnitude)).height
+        let heights = SharedFolderSettings.GuestFolder.allCases.flatMap { folder in
+            [false, true].map { readOnly -> CGFloat in
+                ruler.stringValue = noteText(for: folder, readOnly: readOnly)
+                return ruler.sizeThatFits(
+                    NSSize(width: noteWidth, height: .greatestFiniteMagnitude)).height
+            }
         }
         return ceil(heights.max() ?? 0)
     }
 
-    private static func noteText(for folder: SharedFolderSettings.GuestFolder) -> String {
-        folder.summary
+    private static func noteText(for folder: SharedFolderSettings.GuestFolder,
+                                 readOnly: Bool) -> String {
+        folder.summary(readOnly: readOnly)
             + " Whatever the guest already keeps there stays inside the VM, hidden, "
             + "until sharing is turned off."
     }

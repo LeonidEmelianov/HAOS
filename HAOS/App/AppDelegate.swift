@@ -34,6 +34,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// the app's whole point is to keep Home Assistant running.
     func applicationDidFinishLaunching(_ notification: Notification) {
         registerLoginItem()
+        // Settings a previous version stored, brought up to date before
+        // anything reads them.
+        SharedFolderSettings.migrateReadOnlyDefault()
 
         vmController.onStateChange = { [weak self] state in self?.apply(state) }
         menuBar.update(for: vmState)

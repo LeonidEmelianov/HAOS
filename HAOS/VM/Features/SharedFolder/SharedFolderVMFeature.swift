@@ -37,9 +37,12 @@ final class SharedFolderVMFeature: VMFeature {
         guard let url = SharedFolderSettings.activeFolderURL else { return }
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
 
+        // Read-only is enforced here as well as in the guest's mount options:
+        // the kernel parameter is what the guest asks for, this is what the
+        // host allows, and only the second one holds if the guest remounts.
         let device = VZVirtioFileSystemDeviceConfiguration(tag: SharedFolderSettings.tag)
         device.share = VZSingleDirectoryShare(
-            directory: VZSharedDirectory(url: url, readOnly: false))
+            directory: VZSharedDirectory(url: url, readOnly: SharedFolderSettings.isReadOnly))
         configuration.directorySharingDevices.append(device)
     }
 }

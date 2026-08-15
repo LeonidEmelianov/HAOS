@@ -7,6 +7,7 @@ enum SharedFolderSettings {
     private static let enabledKey = "SharedFolderEnabled"
     private static let pathKey = "SharedFolderPath"
     private static let guestFolderKey = "SharedFolderGuestPath"
+    private static let readOnlyKey = "SharedFolderReadOnly"
 
     /// virtiofs tag the share is published under, and the name the guest
     /// mounts it by.
@@ -30,12 +31,22 @@ enum SharedFolderSettings {
             }
         }
 
-        /// What the folder is good for, for the caption under the popup.
-        var summary: String {
-            switch self {
-            case .backup: return "Home Assistant writes its backups here."
-            case .media: return "The folder shows up in Home Assistant's media browser."
-            case .share: return "The folder shows up as /share, which add-ons read and write."
+        /// What the folder is good for, for the caption under the popup. The
+        /// read-only wording is spelled out per folder rather than tacked on as
+        /// a sentence: what the guest loses differs — backups it can no longer
+        /// write at all, media it can still play.
+        func summary(readOnly: Bool) -> String {
+            switch (self, readOnly) {
+            case (.backup, false): return "Home Assistant writes its backups here."
+            case (.backup, true):
+                return "Home Assistant can restore from the backups here, but not write new ones."
+            case (.media, false): return "The folder shows up in Home Assistant's media browser."
+            case (.media, true):
+                return "The folder shows up in Home Assistant's media browser, "
+                    + "which plays the files without changing them."
+            case (.share, false):
+                return "The folder shows up as /share, which add-ons read and write."
+            case (.share, true): return "The folder shows up as /share, which add-ons read."
             }
         }
     }
@@ -50,7 +61,8 @@ enum SharedFolderSettings {
     /// guest whose share has gone away — sharing turned off, an image moved to
     /// another Mac — from stalling its boot on a mount it can't make.
     static var kernelParameter: String {
-        "systemd.mount-extra=\(tag):\(guestFolder.rawValue):virtiofs:rw,nofail"
+        let access = isReadOnly ? "ro" : "rw"
+        return "systemd.mount-extra=\(tag):\(guestFolder.rawValue):virtiofs:\(access),nofail"
     }
 
     /// Whether a folder on the Mac is shared with the guest. Off by default:
@@ -89,5 +101,31 @@ enum SharedFolderSettings {
             return folder
         }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: guestFolderKey) }
+    }
+
+    /// Whether the guest may only read the share. On by default, and read
+    /// through `object(forKey:)` because `bool(forKey:)` can't tell an unset
+    /// key from a stored `false`: a folder on the Mac is the user's, and the
+    /// guest shouldn't get write access to it without being told to.
+    static var isReadOnly: Bool {
+        get { UserDefaults.standard.object(forKey: readOnlyKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: readOnlyKey) }
+    }
+
+    /// Settles what read-only means for an install that predates the setting,
+    /// once, at launch.
+    ///
+    /// Shares made before this version were read-write, and a Backups share is
+    /// actively being written to — letting the new default reach it would stop
+    /// Home Assistant writing backups without anyone asking for that. So an
+    /// install that already has a folder picked keeps write access, and only a
+    /// fresh setup starts read-only.
+    ///
+    /// This can't be a fallback inside the getter: the folder is picked *after*
+    /// sharing is switched on, so a new user would trip the same "has a folder"
+    /// test moments later and silently get write access too.
+    static func migrateReadOnlyDefault() {
+        guard UserDefaults.standard.object(forKey: readOnlyKey) == nil else { return }
+        isReadOnly = folderURL == nil
     }
 }

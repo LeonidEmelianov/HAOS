@@ -25,7 +25,7 @@ https://github.com/user-attachments/assets/f0c7adba-33de-4805-9fd0-e745f56d1ffa
 - **Automatic first-run setup.** On first launch the app fetches the latest `haos_generic-aarch64` release from GitHub, unpacks it, and boots it. Nothing to download or convert yourself.
 - **Real LAN presence.** The guest is bridged onto your physical network via `vmnet.framework`, so it gets an address from your router's DHCP and participates in multicast — which is what mDNS, SSDP and Matter discovery need to find your devices.
 - **Stable address.** The vmnet interface ID is persisted, so the guest keeps the same MAC and therefore the same DHCP lease across restarts.
-- **A shared folder.** A folder you pick is shared into the guest over virtiofs and mounted as Home Assistant's backups, media or `/share` directory — so backups land in the Finder, and in Time Machine, instead of inside the disk image. See [Shared folder](#shared-folder).
+- **A shared folder.** A folder you pick is shared into the guest over virtiofs and mounted as Home Assistant's backups, media or `/share` directory — read-only by default, or writable so backups land in the Finder, and in Time Machine, instead of inside the disk image. See [Shared folder](#shared-folder).
 - **Console access.** "Show Console" opens the guest's framebuffer when you need to look at the boot log or use the HA CLI.
 - **Clean shutdown.** Quitting sends an ACPI power-button event and waits up to 30 seconds for Home Assistant to shut down properly before forcing it.
 - **Stays awake.** While the VM runs, the app holds a power assertion so an idle host doesn't freeze the guest and drop your automations.
@@ -113,14 +113,16 @@ Off by default. Turn on **Share a folder with Home Assistant** — which asks yo
 
 | Use as | Guest directory | What you get |
 | --- | --- | --- |
-| Backups *(default)* | `/mnt/data/supervisor/backup` | Every backup Home Assistant writes — manual, automatic, or the one it takes before an update — lands on the Mac. Deleting a backup in the Home Assistant UI deletes the file here, and vice versa. |
+| Backups *(default)* | `/mnt/data/supervisor/backup` | Backups on the Mac show up in Home Assistant, ready to restore. Turn read-only off and it works the other way too: every backup Home Assistant writes — manual, automatic, or the one it takes before an update — lands on the Mac, and deleting one in the Home Assistant UI deletes the file here. |
 | Media | `/mnt/data/supervisor/media` | The folder shows up in Home Assistant's media browser. |
-| Share | `/mnt/data/supervisor/share` | The folder shows up as `/share`, which add-ons read and write. |
+| Share | `/mnt/data/supervisor/share` | The folder shows up as `/share`, which add-ons read — and write, with read-only off. |
+
+**Read-only** is on by default: Home Assistant sees the folder's contents but can't write to it, so a share can't rewrite or delete files on the Mac. Turn it off for the cases that need writing — backups Home Assistant creates itself, or an add-on that writes into `/share`.
 
 Two things make that work, both applied the next time the VM starts:
 
-- The folder is offered to the guest as a **virtiofs** share tagged `haos-shared`.
-- `systemd.mount-extra=haos-shared:<guest directory>:virtiofs:rw,nofail` is added to the guest's kernel command line, which mounts the share early enough that Docker and the Supervisor see it.
+- The folder is offered to the guest as a **virtiofs** share tagged `haos-shared`, read-only unless you say otherwise.
+- `systemd.mount-extra=haos-shared:<guest directory>:virtiofs:ro,nofail` is added to the guest's kernel command line (`rw` when read-only is off), which mounts the share early enough that Docker and the Supervisor see it. The host side is what actually enforces the read-only share; the mount option only keeps the guest from asking for more.
 
 Nothing in Home Assistant OS mounts a virtiofs share on its own, and its root filesystem is read-only, so the kernel command line is the only durable place to ask for the mount. It lives in `cmdline.txt` on the image's FAT boot partition — the app edits it by attaching the image while the VM is stopped, and the RAUC update hook carries the file across Home Assistant OS updates. `nofail` keeps a guest that boots without the share from stalling.
 

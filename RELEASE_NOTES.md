@@ -1,3 +1,33 @@
+# HAOS 0.2.2
+
+Gives the shared folder a **Read-only** setting, so a folder on the Mac can be handed to Home Assistant without Home Assistant being able to change what's in it.
+
+## Added
+
+- **Read-only shared folders.** A new checkbox under **Use as:** in Settings. With it on, Home Assistant sees the folder's contents but can't write to it: nothing in the guest can rewrite or delete a file on the Mac. Turn it off for the cases that need writing — backups Home Assistant creates itself, or an add-on writing into `/share`. The caption under the popup says what the current combination means, since what read-only costs depends on the folder: backups become restore-only, media still plays.
+
+  Both halves of the share follow the setting. The virtiofs device is offered read-only, and `systemd.mount-extra=haos-shared:<directory>:virtiofs:ro,nofail` replaces the `rw` form on the guest's kernel command line. The host side is what actually enforces it; the mount option only decides what the guest asks for.
+
+## Changed
+
+- **New setups share read-only by default.** A folder on the Mac is yours, and write access is now something you grant rather than something a share comes with.
+
+  **Upgrading keeps write access.** If you already have a folder picked, this release leaves it writable — it was shared read-write, in most cases with Home Assistant writing backups into it, and switching that off on upgrade would stop the backups without anyone asking for it. The checkbox is there if you want it.
+
+## Installing from the .dmg
+
+Requires **macOS 27 or later** on **Apple Silicon**. Download `HAOS-0.2.2.dmg` from this release, open it, and drag **HAOS** to **Applications**.
+
+The app is ad-hoc signed, not notarized, so Gatekeeper will refuse the downloaded copy until the quarantine flag is removed:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/HAOS.app
+```
+
+Then launch it once from Finder. Building from source with `make install` (see the [README](README.md)) avoids the quarantine step entirely.
+
+---
+
 # HAOS 0.2.1
 
 Tidies the Settings window and rebuilds the app around one file per capability. The app does the same things it did in 0.2.0.

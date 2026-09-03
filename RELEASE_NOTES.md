@@ -1,3 +1,25 @@
+# HAOS 0.2.3
+
+Drops the upgrade carve-out that kept an existing shared folder writable. Every install now follows the same rule: a share is read-only unless you say otherwise.
+
+## Changed
+
+- **Read-only is the default everywhere.** 0.2.2 shipped a one-time migration that left write access on for anyone who already had a folder picked, so a Backups share wouldn't quietly stop taking backups. With no installs old enough to need it, the special case is gone — the setting has one meaning, and the checkbox in Settings is the only thing that decides it. If you were running 0.2.2 with a folder shared read-write, turn **Read-only** off again after updating.
+
+## Installing from the .dmg
+
+Requires **macOS 27 or later** on **Apple Silicon**. Download `HAOS-0.2.3.dmg` from this release, open it, and drag **HAOS** to **Applications**.
+
+The app is ad-hoc signed, not notarized, so Gatekeeper will refuse the downloaded copy until the quarantine flag is removed:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/HAOS.app
+```
+
+Then launch it once from Finder. Building from source with `make install` (see the [README](README.md)) avoids the quarantine step entirely.
+
+---
+
 # HAOS 0.2.2
 
 Gives the shared folder a **Read-only** setting, so a folder on the Mac can be handed to Home Assistant without Home Assistant being able to change what's in it.

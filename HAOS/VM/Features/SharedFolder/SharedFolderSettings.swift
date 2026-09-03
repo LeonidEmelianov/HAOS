@@ -111,21 +111,4 @@ enum SharedFolderSettings {
         get { UserDefaults.standard.object(forKey: readOnlyKey) as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: readOnlyKey) }
     }
-
-    /// Settles what read-only means for an install that predates the setting,
-    /// once, at launch.
-    ///
-    /// Shares made before this version were read-write, and a Backups share is
-    /// actively being written to — letting the new default reach it would stop
-    /// Home Assistant writing backups without anyone asking for that. So an
-    /// install that already has a folder picked keeps write access, and only a
-    /// fresh setup starts read-only.
-    ///
-    /// This can't be a fallback inside the getter: the folder is picked *after*
-    /// sharing is switched on, so a new user would trip the same "has a folder"
-    /// test moments later and silently get write access too.
-    static func migrateReadOnlyDefault() {
-        guard UserDefaults.standard.object(forKey: readOnlyKey) == nil else { return }
-        isReadOnly = folderURL == nil
-    }
 }

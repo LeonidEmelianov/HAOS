@@ -68,10 +68,10 @@ The contract, in `VM/VMFeature.swift`:
 All `prepare` calls run before any `configure`, each in the order
 `VMController.features` lists them. That order matters today: the disk image
 must be downloaded before `SharedFolderVMFeature` can edit `cmdline.txt`
-inside it, and the image must not be grown (which happens in
-`DiskImageVMFeature.configure`) until after that edit — a grown raw image has
-its GPT backup header in the wrong place, and `hdiutil` has to attach the image
-to reach the boot partition.
+inside it. (Growing the image leaves its GPT backup header in the wrong place
+until the guest's next boot fixes it, but `hdiutil` attaches such an image
+without complaint — verified on macOS 27 — which is what lets the Settings
+window grow it in place while the VM is stopped.)
 
 To add a capability: new folder under `VM/Features/`, a type conforming to
 `VMFeature`, one line in `VMController.features`. Nothing else in the
@@ -84,16 +84,18 @@ controller should need to change.
   mount, why the sleep assertion exists, why bridging skips interfaces with no
   link). Match that density; don't narrate the code.
 - **UserDefaults keys are load-bearing.** `VMCPUCount`, `VMMemorySize`,
-  `SharedFolderEnabled`, `SharedFolderPath`, `SharedFolderGuestPath` are what
-  installed copies already store. Renaming one silently resets a user's
-  settings.
+  `VMDiskSize`, `SharedFolderEnabled`, `SharedFolderPath`,
+  `SharedFolderGuestPath`, `SharedFolderReadOnly` are what installed copies
+  already store. Renaming one silently resets a user's settings.
 - **Errors the user will read** are `HAOSError("plain sentence")` — they land
   in the menu's status line or a start-failure alert. Don't invent new error
   domains and codes.
 - **State changes reach the UI on the main queue.** `VMController.report(_:)`
   guarantees that; keep new call sites going through it.
 - Settings are written the moment a control changes (no OK button, per macOS
-  convention) and take effect at the next VM start.
+  convention) and take effect at the next VM start. The disk size is the one
+  exception — growing the image can't be undone, so it waits for its Resize
+  button.
 - Menus and pop-up buttons are built with `ClosureMenuItem` rather than
   `@objc` target/action pairs.
 - Settings rows are described declaratively (`SettingsRow`) and laid out by

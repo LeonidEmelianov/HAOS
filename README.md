@@ -98,7 +98,7 @@ Click the menu bar icon:
 | Shut Down | Graceful ACPI shutdown |
 | Show Console | Opens the guest's display in a window |
 | Open Web UI | Opens <http://homeassistant.local:8123> |
-| Settings… | CPU cores, memory and the shared folder |
+| Settings… | CPU cores, memory, disk size and the shared folder |
 | Quit | Shuts the guest down, then exits |
 
 The icon is a filled house while the VM is running and a dimmed outline otherwise.
@@ -106,6 +106,10 @@ The icon is a filled house while the VM is running and a dimmed outline otherwis
 ## Settings
 
 CPU count and memory are adjustable and take effect the next time the VM starts. Defaults are **2 cores** and **4 GiB**; the floor is 2 GiB, below which the guest runs out of memory during onboarding. Both values are clamped to what `Virtualization.framework` reports the host allows, so a setting carried over from a bigger machine can't produce an invalid configuration.
+
+### Disk size
+
+The virtual disk is **48 GiB** by default and can be grown, in 16 GiB steps up to 256 GiB, with the **Resize** button. The image is grown right away while the VM is stopped and otherwise the next time it starts; either way Home Assistant OS expands its data partition into the new space on its next boot. A disk can't be made smaller — a raw image can't be cut down without losing the partitions at its end — so sizes below the current one are disabled, as are sizes beyond what's free on the Mac. The file is sparse, so growing it costs nothing until the guest actually writes.
 
 ### Shared folder
 
@@ -137,7 +141,7 @@ Whatever the guest already keeps in that directory isn't moved or deleted; it's 
 | `~/Library/Application Support/HAOS/MachineIdentifier` | VM machine identifier |
 | `~/Library/Application Support/HAOS/BridgedInterfaceID` | vmnet interface UUID (keeps the MAC stable) |
 
-The disk image is created at a 48 GiB virtual size — Home Assistant expands its data partition to fill the disk on boot, and the Supervisor's containers don't fit in the ~6 GiB the stock image ships with. The file stays sparse on APFS, so it only occupies what the guest has actually written.
+The disk image is created at a 48 GiB virtual size (adjustable in Settings) — Home Assistant expands its data partition to fill the disk on boot, and the Supervisor's containers don't fit in the ~6 GiB the stock image ships with. The file stays sparse on APFS, so it only occupies what the guest has actually written.
 
 To start over, quit the app and delete both directories.
 

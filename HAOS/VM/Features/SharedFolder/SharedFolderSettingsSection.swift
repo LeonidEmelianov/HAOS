@@ -9,10 +9,6 @@ import AppKit
 /// Selections are written to `SharedFolderSettings` immediately (no OK button,
 /// per macOS convention) and take effect the next time the VM starts.
 final class SharedFolderSettingsSection {
-    /// Width of the wrapping caption, and with it the settings window's
-    /// widest row.
-    private static let noteWidth: CGFloat = 340
-
     private lazy var checkbox = NSButton(
         checkboxWithTitle: "Share a folder with Home Assistant",
         target: self,
@@ -25,7 +21,7 @@ final class SharedFolderSettingsSection {
         checkboxWithTitle: "Read-only",
         target: self,
         action: #selector(toggleReadOnly))
-    private let note = SettingsLabel.wrappingCaption("", width: noteWidth)
+    private let note = SettingsLabel.wrappingCaption("")
     private let folderLabel = NSTextField(labelWithString: "Folder:")
     private let guestFolderLabel = NSTextField(labelWithString: "Use as:")
 
@@ -35,7 +31,7 @@ final class SharedFolderSettingsSection {
         pathLabel.lineBreakMode = .byTruncatingMiddle
         pathLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 230).isActive = true
 
-        note.widthAnchor.constraint(equalToConstant: Self.noteWidth).isActive = true
+        note.widthAnchor.constraint(equalToConstant: SettingsLabel.noteWidth).isActive = true
         // The caption's text changes with the guest folder. Reserving the
         // tallest variant's height keeps the window from resizing under the
         // pointer every time the popup changes.
@@ -149,12 +145,12 @@ final class SharedFolderSettingsSection {
     /// configured like the real one rather than with `boundingRect`, which
     /// wraps text on its own terms and comes up a line short.
     private static var tallestNoteHeight: CGFloat {
-        let ruler = SettingsLabel.wrappingCaption("", width: noteWidth)
+        let ruler = SettingsLabel.wrappingCaption("")
         let heights = SharedFolderSettings.GuestFolder.allCases.flatMap { folder in
             [false, true].map { readOnly -> CGFloat in
                 ruler.stringValue = noteText(for: folder, readOnly: readOnly)
                 return ruler.sizeThatFits(
-                    NSSize(width: noteWidth, height: .greatestFiniteMagnitude)).height
+                    NSSize(width: SettingsLabel.noteWidth, height: .greatestFiniteMagnitude)).height
             }
         }
         return ceil(heights.max() ?? 0)

@@ -1,15 +1,19 @@
 import AppKit
 
 /// Settings window for the VM's CPU count and memory size, plus whatever rows
-/// the features contribute (today, the shared folder). Selections are written
-/// to UserDefaults immediately (no OK button, per macOS convention) and take
-/// effect the next time the VM starts.
+/// the features contribute (today, the disk and the shared folder).
+/// Selections are written to UserDefaults immediately (no OK button, per
+/// macOS convention) and take effect the next time the VM starts.
 final class SettingsWindowController: NSWindowController {
     private let cpuPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let memoryPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let disk: DiskImageSettingsSection
     private let sharedFolder = SharedFolderSettingsSection()
 
-    convenience init() {
+    /// `vmIsIdle` tells the disk section whether the image may be grown on
+    /// the spot rather than at the next start.
+    init(vmIsIdle: @escaping () -> Bool) {
+        disk = DiskImageSettingsSection(vmIsIdle: vmIsIdle)
         let window = NSWindow(
             contentRect: .zero,
             styleMask: [.titled, .closable],
@@ -17,12 +21,14 @@ final class SettingsWindowController: NSWindowController {
             defer: false)
         window.title = "Home Assistant Settings"
         window.isReleasedWhenClosed = false
-        self.init(window: window)
+        super.init(window: window)
 
         let grid = SettingsGrid.make([
             .header("System"),
             .field(label: NSTextField(labelWithString: "CPU cores:"), control: cpuPopUp),
             .field(label: NSTextField(labelWithString: "Memory:"), control: memoryPopUp),
+            .separator,
+        ] + disk.rows + [
             .separator,
         ] + sharedFolder.rows + [
             .separator,
@@ -44,10 +50,16 @@ final class SettingsWindowController: NSWindowController {
         window.center()
     }
 
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("SettingsWindowController does not support NSCoder")
+    }
+
     /// Rebuilds the controls from current defaults and host limits, then
     /// fronts the window.
     func show() {
         populatePopUps()
+        disk.refresh()
         sharedFolder.refresh()
         showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)

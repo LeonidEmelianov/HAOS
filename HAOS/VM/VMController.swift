@@ -55,8 +55,7 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
     }()
 
     /// Where the Home Assistant OS disk image lives on the host.
-    private let diskImageURL = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/HAOS/HAOS.img")
+    private let diskImageURL = DiskImageVMFeature.imageURL
 
     /// True while the guest is up (not while starting, stopping or downloading).
     var isRunning: Bool {

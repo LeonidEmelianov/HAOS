@@ -1,3 +1,27 @@
+# HAOS 0.2.4
+
+Lets you grow the guest's disk from Settings instead of being stuck with the 48 GB it's created at.
+
+## Added
+
+- **Disk size in Settings.** A new *Disk* section with a popup of sizes — 32 GB to 256 GB in 16 GB steps — and a **Resize** button. Unlike the other settings, the size doesn't apply the moment the popup changes: growing a disk can't be undone, so it waits for the button. Press it while Home Assistant is stopped and the image is grown on the spot; press it while Home Assistant is running and the growth happens at the next start, which the caption under the popup says. Either way Home Assistant OS expands its data partition into the new space on its next boot, and the file on the Mac stays sparse, so a bigger disk costs nothing until the guest actually writes to it.
+
+  A disk can be made bigger but not smaller — a raw image can't be cut down without losing the partitions at its end — so sizes below the current one are disabled in the popup, as are sizes beyond the free space on the Mac. An image you've grown by hand to a size that isn't on the list shows up as its own entry.
+
+## Installing from the .dmg
+
+Requires **macOS 27 or later** on **Apple Silicon**. Download `HAOS-0.2.4.dmg` from this release, open it, and drag **HAOS** to **Applications**.
+
+The app is ad-hoc signed, not notarized, so Gatekeeper will refuse the downloaded copy until the quarantine flag is removed:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/HAOS.app
+```
+
+Then launch it once from Finder. Building from source with `make install` (see the [README](README.md)) avoids the quarantine step entirely.
+
+---
+
 # HAOS 0.2.3
 
 Drops the upgrade carve-out that kept an existing shared folder writable. Every install now follows the same rule: a share is read-only unless you say otherwise.

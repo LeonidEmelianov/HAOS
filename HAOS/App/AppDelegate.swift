@@ -139,7 +139,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Opens (creating on first use) the settings window.
     private func openSettings() {
         if settingsWindowController == nil {
-            settingsWindowController = SettingsWindowController()
+            // The disk image is only free to be resized in place while no VM
+            // is using it and no download is writing it.
+            settingsWindowController = SettingsWindowController(
+                vmIsIdle: { [weak self] in self?.vmState.canStart ?? false })
         }
         settingsWindowController?.show()
     }

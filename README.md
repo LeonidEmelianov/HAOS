@@ -27,7 +27,7 @@ https://github.com/user-attachments/assets/f0c7adba-33de-4805-9fd0-e745f56d1ffa
 - **Stable address.** The vmnet interface ID is persisted, so the guest keeps the same MAC and therefore the same DHCP lease across restarts.
 - **A shared folder.** A folder you pick is shared into the guest over virtiofs and mounted as Home Assistant's backups, media or `/share` directory — read-only by default, or writable so backups land in the Finder, and in Time Machine, instead of inside the disk image. See [Shared folder](#shared-folder).
 - **Console access.** "Show Console" opens the guest's framebuffer when you need to look at the boot log or use the HA CLI.
-- **Clean shutdown.** Quitting sends an ACPI power-button event and waits up to 30 seconds for Home Assistant to shut down properly before forcing it.
+- **Clean shutdown.** Quitting presses the guest's power button and waits up to 60 seconds for Home Assistant OS to power off properly before forcing it. Home Assistant OS's generic image ignores a short press out of the box — see [Clean shutdown](#clean-shutdown) for how the app gets around that.
 - **Stays awake.** While the VM runs, the app holds a power assertion so an idle host doesn't freeze the guest and drop your automations.
 
 ## Requirements
@@ -82,7 +82,7 @@ HAOS/
   Settings/  the Settings window and its grid
   Support/   small shared pieces (errors, sleep assertion, menu items)
   VM/        VMController, VM state, the VMFeature protocol
-    Features/DiskImage, Network, SharedFolder, Display
+    Features/DiskImage, Network, SharedFolder, PowerButton, Display
 ```
 
 `VMController` builds only the bare machine — CPUs, memory, firmware. Everything else the guest has is a `VMFeature`: one folder holding that capability's settings, its host-side work, the devices it adds to the machine, and any UI of its own. Adding a capability means adding a folder and one line in `VMController.features`, not another branch in the controller.
@@ -97,7 +97,7 @@ Click the menu bar icon:
 | --- | --- |
 | *(status line)* | Current state — download progress, Starting…, Running, Stopping… |
 | Start Home Assistant | Boots the VM (hidden while something is already in flight) |
-| Shut Down | Graceful ACPI shutdown |
+| Shut Down | Graceful shutdown (see [Clean shutdown](#clean-shutdown)) |
 | Show Console | Opens the guest's display in a window |
 | Open Web UI | Opens <http://homeassistant.local:8123> |
 | Settings… | CPU cores, memory, disk size and the shared folder |
@@ -119,11 +119,11 @@ Off by default. Turn on **Share a folder with Home Assistant** — which asks yo
 
 | Use as | Guest directory | What you get |
 | --- | --- | --- |
-| Backups *(default)* | `/mnt/data/supervisor/backup` | Backups on the Mac show up in Home Assistant, ready to restore. Turn read-only off and it works the other way too: every backup Home Assistant writes — manual, automatic, or the one it takes before an update — lands on the Mac, and deleting one in the Home Assistant UI deletes the file here. |
+| Backups *(default)* | `/mnt/data/supervisor/backup` | Every backup Home Assistant writes — manual, automatic, or the one it takes before an update — lands on the Mac, deleting one in the Home Assistant UI deletes the file here, and a backup you drop into the folder shows up in Home Assistant, ready to restore. This use needs **read-only off**: the Supervisor unpacks a backup into a temporary directory next to the `.tar` before restoring, so on a read-only share backups are listed but can't be restored, and restoring needs as much free space in the folder as the backup itself. |
 | Media | `/mnt/data/supervisor/media` | The folder shows up in Home Assistant's media browser. |
 | Share | `/mnt/data/supervisor/share` | The folder shows up as `/share`, which add-ons read — and write, with read-only off. |
 
-**Read-only** is on by default: Home Assistant sees the folder's contents but can't write to it, so a share can't rewrite or delete files on the Mac. Turn it off for the cases that need writing — backups Home Assistant creates itself, or an add-on that writes into `/share`.
+**Read-only** is on by default: Home Assistant sees the folder's contents but can't write to it, so a share can't rewrite or delete files on the Mac. Turn it off for the cases that need writing — anything to do with backups, including restoring one, or an add-on that writes into `/share`.
 
 Two things make that work, both applied the next time the VM starts:
 
@@ -134,6 +134,12 @@ Nothing in Home Assistant OS mounts a virtiofs share on its own, and its root fi
 
 Whatever the guest already keeps in that directory isn't moved or deleted; it's hidden underneath the mount, and reappears if you turn sharing off. The guest directory is a fixed list rather than a free path on purpose — mounting over the Home Assistant configuration would hide the running instance.
 
+### Clean shutdown
+
+*Shut Down* and *Quit* ask the guest to power off by pressing its power button (`VZVirtualMachine.requestStop()`), then wait up to 60 seconds before forcing it. There's a catch: the `generic-aarch64` image is built for bare-metal boards, where a bumped button mustn't take the house down, so its systemd-logind ignores a short press and powers off only on a long one — and a long press is not something the host can send.
+
+So the app hands the guest a logind drop-in that turns the short press back on, the same way it hands it the shared folder: a one-file directory on the Mac (`~/Library/Application Support/HAOS/logind.conf.d/haos.conf`, containing `HandlePowerKey=poweroff`) is offered as a read-only virtiofs share tagged `haos-logind`, and `systemd.mount-extra=haos-logind:/run/systemd/logind.conf.d:virtiofs:ro,nofail` on the kernel command line mounts it before logind starts. With that, a fresh guest is off about 15 seconds after the request. Without it — say, a guest started by another tool — the request is ignored and the 60-second force stop is what ends it.
+
 ## Data layout
 
 | Path | Contents |
@@ -142,6 +148,7 @@ Whatever the guest already keeps in that directory isn't moved or deleted; it's 
 | `~/Library/Application Support/HAOS/NVRAM` | EFI variable store |
 | `~/Library/Application Support/HAOS/MachineIdentifier` | VM machine identifier |
 | `~/Library/Application Support/HAOS/BridgedInterfaceID` | vmnet interface UUID (keeps the MAC stable) |
+| `~/Library/Application Support/HAOS/logind.conf.d/` | The logind drop-in shared into the guest (see [Clean shutdown](#clean-shutdown)) |
 
 The disk image is created at a 48 GiB virtual size (adjustable in Settings) — Home Assistant expands its data partition to fill the disk on boot, and the Supervisor's containers don't fit in the ~6 GiB the stock image ships with. The file stays sparse on APFS, so it only occupies what the guest has actually written.
 

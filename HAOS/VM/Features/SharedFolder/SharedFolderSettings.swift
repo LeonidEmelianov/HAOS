@@ -33,13 +33,16 @@ enum SharedFolderSettings {
 
         /// What the folder is good for, for the caption under the popup. The
         /// read-only wording is spelled out per folder rather than tacked on as
-        /// a sentence: what the guest loses differs — backups it can no longer
-        /// write at all, media it can still play.
+        /// a sentence: what the guest loses differs — backups it can neither
+        /// write nor restore (the Supervisor unpacks a backup into a temporary
+        /// directory next to the .tar, which a read-only share refuses), media
+        /// it can still play.
         func summary(readOnly: Bool) -> String {
             switch (self, readOnly) {
-            case (.backup, false): return "Home Assistant writes its backups here."
+            case (.backup, false): return "Home Assistant writes its backups here, and restores from them."
             case (.backup, true):
-                return "Home Assistant can restore from the backups here, but not write new ones."
+                return "Home Assistant lists the backups here but can't restore them: "
+                    + "restoring unpacks the backup next to the file. Turn read-only off."
             case (.media, false): return "The folder shows up in Home Assistant's media browser."
             case (.media, true):
                 return "The folder shows up in Home Assistant's media browser, "
@@ -52,9 +55,10 @@ enum SharedFolderSettings {
     }
 
     /// Identifies our kernel parameter in the guest's command line, whatever
-    /// tag or directory it currently names — `haos-` is our own namespace, so
-    /// a share left over from an older version is cleaned up too.
-    static let kernelParameterPrefix = "systemd.mount-extra=haos-"
+    /// directory or access it currently names. The prefix stops at the tag:
+    /// other features mount their own `haos-` shares the same way, and each
+    /// must leave the others' parameters alone.
+    static let kernelParameterPrefix = "systemd.mount-extra=\(tag):"
 
     /// Kernel parameter that has the guest's systemd mount the share at boot,
     /// early enough that Docker and the Supervisor see it. `nofail` keeps a

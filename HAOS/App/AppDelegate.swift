@@ -149,8 +149,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Termination
 
-    /// How long the guest gets to shut down cleanly before it's killed.
-    private static let shutdownGracePeriod: TimeInterval = 30
+    /// How long the guest gets to shut down cleanly before it's killed. A
+    /// restored instance with half a dozen add-ons measured 25 seconds, so 30
+    /// left no room; the extra only costs anything when the guest is hung.
+    private static let shutdownGracePeriod: TimeInterval = 60
 
     /// Asks the guest to shut down cleanly before quitting; force stops after
     /// a grace period. Either way the reply comes from `apply(_:)`, once the

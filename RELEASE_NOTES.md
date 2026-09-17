@@ -1,3 +1,37 @@
+# HAOS 0.2.6
+
+Shuts Home Assistant down properly. Until now every Quit and every *Shut Down* ended in a hard power-off.
+
+## Fixed
+
+- **The guest actually shuts down when asked.** Quitting the app, choosing *Shut Down*, and logging out all ask the guest to power off by pressing its virtual power button (`VZVirtualMachine.requestStop()`), then wait for it to go away before forcing it. The guest never went away: Home Assistant OS's `generic-aarch64` image is built for bare-metal boards, where a bumped power button mustn't take the house down, so its systemd-logind ignores a short press and powers off only on a long one — and a short press is all the host can send. Every stop therefore waited out the 30-second grace period and pulled the plug — the web UI kept answering right up to the kill.
+
+  The app now hands the guest a one-line logind drop-in (`HandlePowerKey=poweroff`) the same way it hands it the shared folder: a read-only virtiofs share tagged `haos-logind`, mounted over `/run/systemd/logind.conf.d` by a `systemd.mount-extra=` entry on the kernel command line, early enough that logind reads it on its way up. Measured on a fresh guest, the web UI is gone within a second of the request and the machine is off in about 14 seconds; a restored instance with six add-ons took 25. The drop-in lives at `~/Library/Application Support/HAOS/logind.conf.d/haos.conf` and is rewritten on every start.
+
+- **The grace period is 60 seconds, up from 30.** Now that shutdowns are real, 30 seconds left a loaded instance five seconds of margin before the force stop. The extra time only costs anything when the guest is genuinely hung.
+
+- **A shutdown request that can't be delivered is logged** instead of being swallowed, so a stop that falls back to the grace period says why.
+
+- **Settings no longer promises that a read-only Backups share can be restored from.** The Supervisor unpacks a backup into a temporary directory next to the `.tar` before restoring, which a read-only share refuses, so a read-only Backups share lists backups but can't restore them. The caption under the popup and the README now say so, and point at turning read-only off. Restoring also needs as much free space in the folder as the backup itself.
+
+## Changed
+
+- Each feature that edits the guest's kernel command line now owns its parameter by a prefix that runs through its virtiofs tag (`systemd.mount-extra=haos-shared:`, `systemd.mount-extra=haos-logind:`), so the two can't delete each other's entry. A `haos-shared` entry written by an earlier version is recognised and replaced as before.
+
+## Installing from the .dmg
+
+Requires **macOS 27 or later** on **Apple Silicon**. Download `HAOS-0.2.6.dmg` from this release, open it, and drag **HAOS** to **Applications**.
+
+The app is ad-hoc signed, not notarized, so Gatekeeper will refuse the downloaded copy until the quarantine flag is removed:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/HAOS.app
+```
+
+Then launch it once from Finder. Building from source with `make install` (see the [README](README.md)) avoids the quarantine step entirely.
+
+---
+
 # HAOS 0.2.5
 
 Tells you what a first boot is doing instead of letting the guest's console look like it failed.

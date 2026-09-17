@@ -45,7 +45,7 @@ HAOS/
   Settings/  SettingsWindowController, SettingsGrid
   Support/   HAOSError, SleepAssertion, ClosureMenuItem
   VM/        VMController, VMState, VMSettings, VMFeature
-    Features/DiskImage, Network, SharedFolder, Display
+    Features/DiskImage, Network, SharedFolder, PowerButton, Display
 ```
 
 `VMController` builds only the bare machine — CPU count, memory, firmware,
@@ -67,8 +67,12 @@ The contract, in `VM/VMFeature.swift`:
 
 All `prepare` calls run before any `configure`, each in the order
 `VMController.features` lists them. That order matters today: the disk image
-must be downloaded before `SharedFolderVMFeature` can edit `cmdline.txt`
-inside it. (Growing the image leaves its GPT backup header in the wrong place
+must be downloaded before `SharedFolderVMFeature` and `PowerButtonVMFeature`
+can edit `cmdline.txt` inside it. Each feature that edits the command line
+owns one parameter, identified by a prefix that runs through its virtiofs
+tag (`systemd.mount-extra=haos-shared:`, `systemd.mount-extra=haos-logind:`);
+a prefix that stopped short of the tag would delete the other feature's
+parameter. (Growing the image leaves its GPT backup header in the wrong place
 until the guest's next boot fixes it, but `hdiutil` attaches such an image
 without complaint — verified on macOS 27 — which is what lets the Settings
 window grow it in place while the VM is stopped.)
@@ -105,6 +109,11 @@ controller should need to change.
 
 - `GuestBootConfig` attaches the disk image with `hdiutil` and mounts its FAT
   boot partition. It requires no privileges but the VM **must be stopped**.
+- `VZVirtualMachine.requestStop()` is a *short* power-button press, which
+  Home Assistant OS's generic image ignores (`HandlePowerKey=ignore`; only a
+  long press powers off). `PowerButtonVMFeature` mounts a logind drop-in into
+  the guest to change that. If shutdowns start taking the full grace period
+  again, that mount is the first thing to check.
 - vmnet bridging triggers a one-time system authorization prompt on first
   start, and `vmnet_start_interface` can block for a while, which is why the
   whole start path runs off the main thread.

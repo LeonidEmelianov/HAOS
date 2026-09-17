@@ -26,6 +26,7 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
     private let features: [VMFeature] = [
         DiskImageVMFeature(),
         SharedFolderVMFeature(),
+        PowerButtonVMFeature(),
         NetworkVMFeature(),
         DisplayVMFeature(),
     ]
@@ -225,12 +226,19 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
         sleepAssertion.end()
     }
 
-    /// Graceful shutdown: sends an ACPI power-button event so HAOS shuts
-    /// down cleanly. `onStateChange` reports `.stopped` once the guest is off.
+    /// Graceful shutdown: presses the guest's power button, which
+    /// `PowerButtonVMFeature` has taught Home Assistant OS to honor.
+    /// `onStateChange` reports `.stopped` once the guest is off; if the
+    /// request can't even be delivered, the caller's grace period still ends
+    /// in a force stop, so the failure is only logged.
     func requestStop() {
         guard let vm = virtualMachine, vm.state == .running else { return }
         report(.stopping)
-        try? vm.requestStop()
+        do {
+            try vm.requestStop()
+        } catch {
+            NSLog("Could not ask the guest to shut down: %@", error.localizedDescription)
+        }
     }
 
     /// Kills the VM without giving the guest a chance to shut down. Used as

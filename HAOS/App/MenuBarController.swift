@@ -65,16 +65,17 @@ final class MenuBarController {
         openWebUIItem.isHidden = !state.isRunning
     }
 
-    /// The icon mirrors the VM lifecycle: filled house while running, power
-    /// symbol while shutting down, dimmed for transitional and off states.
+    /// The icon mirrors the VM lifecycle: filled house once Home Assistant
+    /// is up, power symbol while shutting down, dimmed for transitional and
+    /// off states.
     private func updateIcon(for state: VMState) {
         guard let button = statusItem.button else { return }
         let symbol: String
         let dimmed: Bool
         switch state {
-        case .running:
+        case .running(.ready):
             (symbol, dimmed) = ("house.fill", false)
-        case .starting:
+        case .starting, .running:
             (symbol, dimmed) = ("house.fill", true)
         case .stopping:
             (symbol, dimmed) = ("power", true)

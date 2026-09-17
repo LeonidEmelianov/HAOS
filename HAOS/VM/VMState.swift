@@ -9,8 +9,9 @@ enum VMState {
     /// The VM is booting.
     case starting
 
-    /// The guest is up and running.
-    case running
+    /// The guest is up. `homeAssistant` is how far Home Assistant itself has
+    /// got: the guest is on the network well before the web UI answers.
+    case running(homeAssistant: HomeAssistantProgress)
 
     /// A graceful shutdown was requested and the guest is powering off.
     case stopping
@@ -28,7 +29,10 @@ enum VMState {
         switch self {
         case .provisioning(let progress): return progress
         case .starting: return "Starting…"
-        case .running: return "Running"
+        case .running(.installing):
+            return "Running — installing Home Assistant (first start; takes several minutes)"
+        case .running(.starting): return "Running — starting Home Assistant…"
+        case .running(.ready): return "Running"
         case .stopping: return "Stopping…"
         case .stopped(let error?): return "Stopped (error: \(error))"
         case .stopped(nil): return "Stopped"
@@ -43,7 +47,7 @@ enum VMState {
         return false
     }
 
-    /// True while the guest is up.
+    /// True while the guest is up, whether or not Home Assistant is yet.
     var isRunning: Bool {
         if case .running = self { return true }
         return false
@@ -58,4 +62,20 @@ enum VMState {
         case .provisioning, .starting, .running, .stopping: return false
         }
     }
+}
+
+/// What the guest has to show for itself once it's up. The Supervisor starts
+/// Home Assistant some time after the guest boots, and on a first boot it has
+/// to download Home Assistant before it can start it — minutes during which
+/// the guest's console drops into an "emergency" shell that looks like a
+/// failure and isn't.
+enum HomeAssistantProgress {
+    /// First boot: the Supervisor is downloading Home Assistant's containers.
+    case installing
+
+    /// The Supervisor is bringing Home Assistant up.
+    case starting
+
+    /// The web UI answers.
+    case ready
 }

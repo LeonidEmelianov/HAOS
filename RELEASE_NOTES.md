@@ -1,3 +1,29 @@
+# HAOS 0.2.5
+
+Tells you what a first boot is doing instead of letting the guest's console look like it failed.
+
+## Changed
+
+- **The status line follows Home Assistant, not just the guest.** *Running* used to appear the moment the virtual machine was up, which on a first boot is minutes before Home Assistant is: the Supervisor still has to download Home Assistant's containers, and meanwhile the console drops into an "emergency console" warning that the CLI isn't starting — Home Assistant OS being impatient with itself, not a failure. The menu now says *Running — installing Home Assistant (first start; takes several minutes)* for that stretch, *Running — starting Home Assistant…* on later boots, and plain *Running* (with the menu icon lit) once the web UI actually answers. The app tells the phases apart by what answers on port 8123: the Supervisor's placeholder page while it's installing, Home Assistant itself once it's up, nothing in between. A guest quit halfway through its install is reported as still installing on the boot after.
+
+## Fixed
+
+- **Nothing of macOS's is left on the guest's boot partition.** Editing `cmdline.txt` for the shared folder mounts the boot partition on the Mac, and macOS marks any writable volume it mounts with an `.fseventsd` directory. The AppleDouble sidecar `._cmdline.txt` was already being removed, but only when the file changed; both are now removed on every mount, before the unmount, where the removal sticks.
+
+## Installing from the .dmg
+
+Requires **macOS 27 or later** on **Apple Silicon**. Download `HAOS-0.2.5.dmg` from this release, open it, and drag **HAOS** to **Applications**.
+
+The app is ad-hoc signed, not notarized, so Gatekeeper will refuse the downloaded copy until the quarantine flag is removed:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/HAOS.app
+```
+
+Then launch it once from Finder. Building from source with `make install` (see the [README](README.md)) avoids the quarantine step entirely.
+
+---
+
 # HAOS 0.2.4
 
 Lets you grow the guest's disk from Settings instead of being stuck with the 48 GB it's created at.

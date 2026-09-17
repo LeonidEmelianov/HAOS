@@ -22,7 +22,7 @@ https://github.com/user-attachments/assets/f0c7adba-33de-4805-9fd0-e745f56d1ffa
 ## Features
 
 - **One-click start.** The VM boots when the app launches; a menu item starts and stops it by hand.
-- **Automatic first-run setup.** On first launch the app fetches the latest `haos_generic-aarch64` release from GitHub, unpacks it, and boots it. Nothing to download or convert yourself.
+- **Automatic first-run setup.** On first launch the app fetches the latest `haos_generic-aarch64` release from GitHub, unpacks it, and boots it. Nothing to download or convert yourself. The menu's status line follows the whole way — download, unpack, and the minutes the guest then spends installing Home Assistant — and only says *Running* once the web UI actually answers.
 - **Real LAN presence.** The guest is bridged onto your physical network via `vmnet.framework`, so it gets an address from your router's DHCP and participates in multicast — which is what mDNS, SSDP and Matter discovery need to find your devices.
 - **Stable address.** The vmnet interface ID is persisted, so the guest keeps the same MAC and therefore the same DHCP lease across restarts.
 - **A shared folder.** A folder you pick is shared into the guest over virtiofs and mounted as Home Assistant's backups, media or `/share` directory — read-only by default, or writable so backups land in the Finder, and in Time Machine, instead of inside the disk image. See [Shared folder](#shared-folder).
@@ -61,6 +61,8 @@ The script accepts `--no-launch` and `--build-only`, and honors `DEST_DIR` and `
 Autostart registers itself only when the app runs from `/Applications`, so a debug build in DerivedData won't quietly add itself to your login items. Turn it off under **System Settings → General → Login Items**.
 
 The first launch triggers two system prompts: one to allow local network access, and a one-time authorization for bridged networking.
+
+On that first boot the guest's console drops into an "emergency console" with a warning that the Home Assistant CLI isn't starting. That's Home Assistant OS being impatient with itself: the Supervisor is still downloading Home Assistant's containers, which takes a few minutes, and the CLI gives up waiting before it's done. Nothing needs doing — the menu says *installing Home Assistant* until the web UI is up.
 
 ## Building in Xcode
 

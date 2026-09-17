@@ -34,6 +34,10 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
     /// the guest.
     private let sleepAssertion = SleepAssertion(reason: "Home Assistant VM running")
 
+    /// Tells the menu when Home Assistant itself is up, which the guest
+    /// running says nothing about.
+    private lazy var webUIProbe = WebUIProbe(webUIURL: webUIURL)
+
     /// Preparation and configuration run here rather than on a global queue:
     /// a first launch downloads several hundred MB on this thread, and that
     /// shouldn't tie up a thread the rest of the system is sharing.
@@ -146,19 +150,24 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
         startQueue.async { [weak self] in
             guard let self else { return }
             do {
+                // No image yet means this start downloads one, and the guest
+                // will spend its first boot installing Home Assistant.
+                let isFirstBoot = !FileManager.default.fileExists(atPath: self.diskImageURL.path)
                 let context = self.featureContext
                 for feature in self.features {
                     try feature.prepare(in: context)
                 }
                 let configuration = try self.makeConfiguration(in: context)
-                DispatchQueue.main.async { self.boot(configuration, completion: completion) }
+                DispatchQueue.main.async {
+                    self.boot(configuration, isFirstBoot: isFirstBoot, completion: completion)
+                }
             } catch {
                 DispatchQueue.main.async { self.failStart(error, completion: completion) }
             }
         }
     }
 
-    private func boot(_ configuration: VZVirtualMachineConfiguration,
+    private func boot(_ configuration: VZVirtualMachineConfiguration, isFirstBoot: Bool,
                       completion: @escaping (Result<VZVirtualMachine, Error>) -> Void) {
         // Progress from a first-launch download has been sitting in the status
         // line; the machine is past that now.
@@ -172,10 +181,26 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
             switch result {
             case .success:
                 self.isStarting = false
-                self.report(.running)
+                self.report(.running(homeAssistant: isFirstBoot ? .installing : .starting))
+                self.watchForHomeAssistant()
                 completion(.success(vm))
             case .failure(let error):
                 self.failStart(error, completion: completion)
+            }
+        }
+    }
+
+    /// Keeps the status line honest about Home Assistant once the guest is
+    /// up. What answers on the web UI port says which phase the guest is in
+    /// better than the first-boot guess: a guest quit halfway through its
+    /// install is still installing on the boot after.
+    private func watchForHomeAssistant() {
+        webUIProbe.start { [weak self] sighting in
+            guard let self, self.isRunning else { return }
+            switch sighting {
+            case .nothing: break
+            case .placeholder: self.report(.running(homeAssistant: .installing))
+            case .homeAssistant: self.report(.running(homeAssistant: .ready))
             }
         }
     }
@@ -193,6 +218,7 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
     /// vmnet interface, above all) and the sleep assertion. Every stop path —
     /// guest shutdown, error stop, force stop, failed start — ends here.
     private func releaseResources() {
+        webUIProbe.stop()
         for feature in features {
             feature.tearDown()
         }

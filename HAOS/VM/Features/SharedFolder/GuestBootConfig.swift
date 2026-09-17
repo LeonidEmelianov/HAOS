@@ -31,23 +31,28 @@ enum GuestBootConfig {
             .appendingPathComponent("HAOS-boot", isDirectory: true)
         try FileManager.default.createDirectory(at: mountPoint, withIntermediateDirectories: true)
         try run("/usr/sbin/diskutil", ["mount", "-mountPoint", mountPoint.path, image.bootSlice])
+        let file = mountPoint.appendingPathComponent("cmdline.txt")
         defer {
+            // Mounting the volume read-write leaves macOS's marks on it: an
+            // `.fseventsd` directory from the moment it's mounted, and — once
+            // the file is written — the extended attributes macOS stamps on
+            // it (provenance, and the like), which FAT can't hold, so they
+            // spill into an AppleDouble sidecar. Nothing in the guest wants
+            // either on its boot partition, and removed before the unmount
+            // they stay gone.
+            try? FileManager.default.removeItem(
+                at: mountPoint.appendingPathComponent(".fseventsd", isDirectory: true))
+            try? FileManager.default.removeItem(
+                at: mountPoint.appendingPathComponent("._" + file.lastPathComponent))
             _ = try? run("/usr/sbin/diskutil", ["unmount", mountPoint.path])
             try? FileManager.default.removeItem(at: mountPoint)
         }
 
-        let file = mountPoint.appendingPathComponent("cmdline.txt")
         let current = (try? String(contentsOf: file, encoding: .utf8)) ?? ""
         let updated = commandLine(current, replacingPrefix: prefix, with: parameter)
         guard updated != firstLine(of: current) else { return }
         // Non-atomically, so GRUB keeps reading the same file it always has.
         try (updated + "\n").write(to: file, atomically: false, encoding: .utf8)
-        // Extended attributes macOS stamps on the file (provenance, and the
-        // like) can't live in FAT, so it spills them into an AppleDouble
-        // sidecar. Nothing in the guest wants that on its boot partition.
-        try? FileManager.default.removeItem(
-            at: file.deletingLastPathComponent()
-                .appendingPathComponent("._" + file.lastPathComponent))
     }
 
     /// The command line GRUB should read, given the one it holds today.

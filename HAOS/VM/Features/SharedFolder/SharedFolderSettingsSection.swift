@@ -21,7 +21,10 @@ final class SharedFolderSettingsSection {
         checkboxWithTitle: "Read-only",
         target: self,
         action: #selector(toggleReadOnly))
-    private let note = SettingsLabel.wrappingCaption("")
+    private let note = SettingsLabel.reservedCaption(
+        fitting: SharedFolderSettings.GuestFolder.allCases.flatMap { folder in
+            [false, true].map { noteText(for: folder, readOnly: $0) }
+        })
     private let folderLabel = NSTextField(labelWithString: "Folder:")
     private let guestFolderLabel = NSTextField(labelWithString: "Use as:")
 
@@ -30,12 +33,6 @@ final class SharedFolderSettingsSection {
         // A long path would otherwise stretch the window without limit.
         pathLabel.lineBreakMode = .byTruncatingMiddle
         pathLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 230).isActive = true
-
-        note.widthAnchor.constraint(equalToConstant: SettingsLabel.noteWidth).isActive = true
-        // The caption's text changes with the guest folder. Reserving the
-        // tallest variant's height keeps the window from resizing under the
-        // pointer every time the popup changes.
-        note.heightAnchor.constraint(equalToConstant: Self.tallestNoteHeight).isActive = true
 
         let folderRow = NSStackView(views: [pathLabel, chooseButton])
         folderRow.spacing = 8
@@ -138,22 +135,6 @@ final class SharedFolderSettingsSection {
             }
             self?.updateControls()
         }
-    }
-
-    /// Height of the tallest caption, so the window can be sized once for
-    /// whichever guest folder and access the user picks. Measured with a label
-    /// configured like the real one rather than with `boundingRect`, which
-    /// wraps text on its own terms and comes up a line short.
-    private static var tallestNoteHeight: CGFloat {
-        let ruler = SettingsLabel.wrappingCaption("")
-        let heights = SharedFolderSettings.GuestFolder.allCases.flatMap { folder in
-            [false, true].map { readOnly -> CGFloat in
-                ruler.stringValue = noteText(for: folder, readOnly: readOnly)
-                return ruler.sizeThatFits(
-                    NSSize(width: SettingsLabel.noteWidth, height: .greatestFiniteMagnitude)).height
-            }
-        }
-        return ceil(heights.max() ?? 0)
     }
 
     private static func noteText(for folder: SharedFolderSettings.GuestFolder,

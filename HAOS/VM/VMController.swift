@@ -28,6 +28,7 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
         DiskImageVMFeature(),
         SharedFolderVMFeature(),
         PowerButtonVMFeature(),
+        NoSMEVMFeature(),
         NetworkVMFeature(),
         DisplayVMFeature(),
     ]

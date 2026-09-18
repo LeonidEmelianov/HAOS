@@ -17,7 +17,11 @@ final class DiskImageSettingsSection {
     private let sizePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private lazy var resizeButton = NSButton(
         title: "Resize", target: self, action: #selector(resize))
-    private let note = SettingsLabel.wrappingCaption("")
+    /// The wordiest caption is a pending resize; three-digit sizes make it
+    /// widest.
+    private let note = SettingsLabel.reservedCaption(fitting: [
+        noteText(current: 240 * DiskImageSettings.gibibyte, target: 256 * DiskImageSettings.gibibyte),
+    ])
 
     /// The size picked in the popup, applied when the button is pressed.
     private var chosenSize = DiskImageSettings.defaultSize
@@ -28,11 +32,6 @@ final class DiskImageSettingsSection {
 
     /// The section's rows, ready to be placed in the Settings window.
     lazy var rows: [SettingsRow] = {
-        note.widthAnchor.constraint(equalToConstant: SettingsLabel.noteWidth).isActive = true
-        // The caption's text changes with the disk. Reserving the tallest
-        // variant's height keeps the window from resizing under the pointer.
-        note.heightAnchor.constraint(equalToConstant: Self.tallestNoteHeight).isActive = true
-
         let sizeRow = NSStackView(views: [sizePopUp, resizeButton])
         sizeRow.spacing = 8
 
@@ -122,19 +121,6 @@ final class DiskImageSettingsSection {
             }
         }
         refresh()
-    }
-
-    /// Height of the tallest caption, so the window can be sized once. The
-    /// wordiest variant is a pending resize; three-digit sizes make it widest.
-    /// Measured with a label configured like the real one rather than with
-    /// `boundingRect`, which wraps text on its own terms and comes up a line
-    /// short.
-    private static var tallestNoteHeight: CGFloat {
-        let ruler = SettingsLabel.wrappingCaption("")
-        ruler.stringValue = noteText(current: 240 * DiskImageSettings.gibibyte,
-                                     target: 256 * DiskImageSettings.gibibyte)
-        return ceil(ruler.sizeThatFits(
-            NSSize(width: SettingsLabel.noteWidth, height: .greatestFiniteMagnitude)).height)
     }
 
     private static func noteText(current: UInt64?, target: UInt64) -> String {

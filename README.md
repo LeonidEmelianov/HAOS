@@ -82,7 +82,7 @@ HAOS/
   Settings/  the Settings window and its grid
   Support/   small shared pieces (errors, sleep assertion, menu items)
   VM/        VMController, VM state, the VMFeature protocol
-    Features/DiskImage, Network, SharedFolder, PowerButton, Display
+    Features/DiskImage, Network, SharedFolder, PowerButton, NoSME, Display
 ```
 
 `VMController` builds only the bare machine — CPUs, memory, firmware. Everything else the guest has is a `VMFeature`: one folder holding that capability's settings, its host-side work, the devices it adds to the machine, and any UI of its own. Adding a capability means adding a folder and one line in `VMController.features`, not another branch in the controller.
@@ -145,6 +145,10 @@ Whatever the guest already keeps in that directory isn't moved or deleted; it's 
 *Shut Down* and *Quit* ask the guest to power off by pressing its power button (`VZVirtualMachine.requestStop()`), then wait up to 60 seconds before forcing it. There's a catch: the `generic-aarch64` image is built for bare-metal boards, where a bumped button mustn't take the house down, so its systemd-logind ignores a short press and powers off only on a long one — and a long press is not something the host can send.
 
 So the app hands the guest a logind drop-in that turns the short press back on, the same way it hands it the shared folder: a one-file directory on the Mac (`~/Library/Application Support/HAOS/logind.conf.d/haos.conf`, containing `HandlePowerKey=poweroff`) is offered as a read-only virtiofs share tagged `haos-logind`, and `systemd.mount-extra=haos-logind:/run/systemd/logind.conf.d:virtiofs:ro,nofail` on the kernel command line mounts it before logind starts. With that, a fresh guest is off about 15 seconds after the request. Without it — say, a guest started by another tool — the request is ignored and the 60-second force stop is what ends it.
+
+### M4 Macs
+
+Apple's M4 and later have the Scalable Matrix Extension, Virtualization.framework shows it to the guest, and the guest's kernel turns it on — after which Home Assistant OS doesn't survive its own boot. System processes die of illegal instructions (the M4 has SME2 without the non-streaming SVE that code picked on the SME flag tends to assume), ext4 rejects block bitmaps that are fine on disk and writes back ones that aren't, and the boot sits on *Create System Files and Directories* forever. On a Mac with SME the app puts `arm64.nosme` on the guest's kernel command line — in `cmdline.txt`, the same way as the mounts above — so the kernel leaves the feature off and the guest is what it would be on an M1–M3. Home Assistant has no use for SME; nothing is lost.
 
 ## Data layout
 

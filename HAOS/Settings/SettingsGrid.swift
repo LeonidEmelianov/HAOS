@@ -68,7 +68,7 @@ enum SettingsGrid {
 enum SettingsLabel {
     /// Width of a wrapping caption, and with it the window's widest row. One
     /// figure for every section, so their captions line up.
-    static let noteWidth: CGFloat = 340
+    private static let noteWidth: CGFloat = 340
 
     /// A section heading.
     static func header(_ title: String) -> NSTextField {
@@ -85,14 +85,26 @@ enum SettingsLabel {
         return label
     }
 
-    /// A caption that wraps to `width` instead of running off the window.
-    static func wrappingCaption(_ text: String, width: CGFloat = noteWidth) -> NSTextField {
+    /// A wrapping caption whose text a section swaps as its controls change,
+    /// sized once for the tallest of `variants` so the window doesn't resize
+    /// under the pointer. Measured with the label itself rather than with
+    /// `boundingRect`, which wraps text on its own terms and comes up a line
+    /// short.
+    static func reservedCaption(fitting variants: [String]) -> NSTextField {
         // A label is single-line until told otherwise, and this one wraps.
-        let label = caption(text)
+        let label = caption("")
         label.usesSingleLineMode = false
         label.lineBreakMode = .byWordWrapping
         label.maximumNumberOfLines = 0
-        label.preferredMaxLayoutWidth = width
+        label.preferredMaxLayoutWidth = noteWidth
+
+        let heights = variants.map { text -> CGFloat in
+            label.stringValue = text
+            return label.sizeThatFits(NSSize(width: noteWidth, height: .greatestFiniteMagnitude)).height
+        }
+        label.stringValue = ""
+        label.widthAnchor.constraint(equalToConstant: noteWidth).isActive = true
+        label.heightAnchor.constraint(equalToConstant: ceil(heights.max() ?? 0)).isActive = true
         return label
     }
 }

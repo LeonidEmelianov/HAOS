@@ -9,21 +9,15 @@ import AppKit
 /// per macOS convention) and takes effect the next time the VM starts.
 final class NetworkSettingsSection {
     private let modePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let note = SettingsLabel.wrappingCaption("")
+    private let note = SettingsLabel.reservedCaption(
+        fitting: NetworkSettings.Mode.allCases.map(\.summary))
 
     /// The section's rows, ready to be placed in the Settings window.
-    lazy var rows: [SettingsRow] = {
-        note.widthAnchor.constraint(equalToConstant: SettingsLabel.noteWidth).isActive = true
-        // The caption's text changes with the mode. Reserving the tallest
-        // variant's height keeps the window from resizing under the pointer.
-        note.heightAnchor.constraint(equalToConstant: Self.tallestNoteHeight).isActive = true
-
-        return [
-            .header("Network"),
-            .field(label: NSTextField(labelWithString: "Connection:"), control: modePopUp),
-            .caption(note),
-        ]
-    }()
+    lazy var rows: [SettingsRow] = [
+        .header("Network"),
+        .field(label: NSTextField(labelWithString: "Connection:"), control: modePopUp),
+        .caption(note),
+    ]
 
     /// Rebuilds the controls from the stored setting. Called each time the
     /// window is shown.
@@ -45,19 +39,5 @@ final class NetworkSettingsSection {
         let mode = NetworkSettings.mode
         modePopUp.selectItem(withTitle: mode.title)
         note.stringValue = mode.summary
-    }
-
-    /// Height of the tallest caption, so the window can be sized once for
-    /// whichever mode the user picks. Measured with a label configured like
-    /// the real one rather than with `boundingRect`, which wraps text on its
-    /// own terms and comes up a line short.
-    private static var tallestNoteHeight: CGFloat {
-        let ruler = SettingsLabel.wrappingCaption("")
-        let heights = NetworkSettings.Mode.allCases.map { mode -> CGFloat in
-            ruler.stringValue = mode.summary
-            return ruler.sizeThatFits(
-                NSSize(width: SettingsLabel.noteWidth, height: .greatestFiniteMagnitude)).height
-        }
-        return ceil(heights.max() ?? 0)
     }
 }

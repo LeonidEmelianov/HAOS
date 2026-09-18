@@ -1,3 +1,33 @@
+# HAOS 0.2.8
+
+Boots on M4 Macs. A fresh install on an M4 under macOS 27 never got past its first boot.
+
+## Fixed
+
+- **Home Assistant OS survives its first boot on an M4.** Apple's M4 and later have the Scalable Matrix Extension, Virtualization.framework shows it to the guest, and the guest's kernel turns it on — after which the guest comes apart within seconds of mounting its disks: `systemd-tmpfiles` dies of an illegal instruction, a udev worker segfaults, ext4 rejects block bitmaps whose checksums are fine on disk and writes back one that isn't, and the boot sits on *Create System Files and Directories* forever (the crashed job never completes, so `sysinit.target` waits on it). The M4 implements SME2 without the non-streaming SVE that code picked on the SME flag tends to assume; the same combination has taken down OpenSSL, OpenBLAS, the JVM and .NET in guests on M4 hosts. On a Mac with SME (`hw.optional.arm.FEAT_SME`) the app now puts `arm64.nosme` on the guest's kernel command line — in `cmdline.txt`, the way the shared-folder and power-button mounts get there — so the kernel leaves the feature off and the guest is what it would be on an M1–M3. Home Assistant has no use for SME. Unlike the other two parameters, this one failing to land fails the start: a guest booted with SME corrupts its data partition, and not starting is the safer outcome.
+
+  Diagnosed on an M4 under macOS 27.0 with Home Assistant OS 18.3, by reading the stuck guest's journal from an APFS clone of its disk image. The app's own work was cleared first: the image it unpacks is byte-identical to the published one, and both of its mounts had succeeded.
+
+  **If a first boot on an M4 already stalled:** quit the app, delete `~/Library/HAOS/HAOS.img` (nothing was installed into it yet) and launch again; the image is downloaded afresh and boots with the parameter.
+
+## Changed
+
+- The three Settings sections whose caption changes with their controls (disk, network, shared folder) share one `SettingsLabel.reservedCaption(fitting:)`, which sizes the label for its tallest variant, instead of each measuring for itself. Same layout, sixty lines fewer.
+
+## Installing from the .dmg
+
+Requires **macOS 27 or later** on **Apple Silicon**. Download `HAOS-0.2.8.dmg` from this release, open it, and drag **HAOS** to **Applications**.
+
+The app is ad-hoc signed, not notarized, so Gatekeeper will refuse the downloaded copy until the quarantine flag is removed:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/HAOS.app
+```
+
+Then launch it once from Finder. Building from source with `make install` (see the [README](README.md)) avoids the quarantine step entirely.
+
+---
+
 # HAOS 0.2.7
 
 Works on networks that won't bridge — corporate Wi-Fi, typically — and says so when that's the problem.

@@ -45,7 +45,7 @@ HAOS/
   Settings/  SettingsWindowController, SettingsGrid
   Support/   HAOSError, SleepAssertion, ClosureMenuItem
   VM/        VMController, VMState, VMSettings, VMFeature
-    Features/DiskImage, Network, SharedFolder, PowerButton, Display
+    Features/DiskImage, Network, SharedFolder, PowerButton, NoSME, Display
 ```
 
 `VMController` builds only the bare machine — CPU count, memory, firmware,
@@ -67,15 +67,16 @@ The contract, in `VM/VMFeature.swift`:
 
 All `prepare` calls run before any `configure`, each in the order
 `VMController.features` lists them. That order matters today: the disk image
-must be downloaded before `SharedFolderVMFeature` and `PowerButtonVMFeature`
-can edit `cmdline.txt` inside it. Each feature that edits the command line
-owns one parameter, identified by a prefix that runs through its virtiofs
-tag (`systemd.mount-extra=haos-shared:`, `systemd.mount-extra=haos-logind:`);
-a prefix that stopped short of the tag would delete the other feature's
-parameter. (Growing the image leaves its GPT backup header in the wrong place
-until the guest's next boot fixes it, but `hdiutil` attaches such an image
-without complaint — verified on macOS 27 — which is what lets the Settings
-window grow it in place while the VM is stopped.)
+must be downloaded before `SharedFolderVMFeature`, `PowerButtonVMFeature` and
+`NoSMEVMFeature` can edit `cmdline.txt` inside it. Each feature that edits the
+command line owns one parameter, identified by a prefix that runs through its
+virtiofs tag (`systemd.mount-extra=haos-shared:`,
+`systemd.mount-extra=haos-logind:`); a prefix that stopped short of the tag
+would delete the other feature's parameter; `arm64.nosme` takes no value and
+is its own prefix. (Growing the image leaves its GPT backup header in the
+wrong place until the guest's next boot fixes it, but `hdiutil` attaches such
+an image without complaint — verified on macOS 27 — which is what lets the
+Settings window grow it in place while the VM is stopped.)
 
 To add a capability: new folder under `VM/Features/`, a type conforming to
 `VMFeature`, one line in `VMController.features`. Nothing else in the
@@ -112,6 +113,12 @@ controller should need to change.
 
 - `GuestBootConfig` attaches the disk image with `hdiutil` and mounts its FAT
   boot partition. It requires no privileges but the VM **must be stopped**.
+- On an M4 or later the guest must boot with `arm64.nosme`, which
+  `NoSMEVMFeature` adds on hosts whose `hw.optional.arm.FEAT_SME` is set.
+  A guest that gets SME crashes and corrupts its ext4 partitions within
+  seconds of mounting them (`systemd-tmpfiles` dies of SIGILL, the boot
+  stalls on *Create System Files and Directories*). If a fresh image dies
+  in early boot on an M4, check that parameter in `cmdline.txt` first.
 - `VZVirtualMachine.requestStop()` is a *short* power-button press, which
   Home Assistant OS's generic image ignores (`HandlePowerKey=ignore`; only a
   long press powers off). `PowerButtonVMFeature` mounts a logind drop-in into

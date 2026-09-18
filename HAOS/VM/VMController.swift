@@ -1,5 +1,6 @@
 import Foundation
 @preconcurrency import Virtualization
+import os
 
 /// Owns the Home Assistant VM: assembles the machine from its features, drives
 /// the start/stop lifecycle, and reports each transition through
@@ -49,6 +50,17 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
     /// twice over the same disk image.
     private var isStarting = false
 
+    /// The two things the running state is made of, kept so that either can
+    /// change without losing the other: the web UI probe moves Home
+    /// Assistant along while a feature raises or clears a problem.
+    private var homeAssistantProgress: HomeAssistantProgress = .starting
+    private var guestProblem: String?
+
+    /// True from a shutdown request until the guest is gone: the VM still
+    /// reports itself running, but the status line says "Stopping…" and a
+    /// late problem report mustn't take that back.
+    private var isStopping = false
+
     /// Persistent VM state (EFI variable store, machine identifier) lives in
     /// ~/Library/Application Support/HAOS/
     private let stateDirectory: URL = {
@@ -73,7 +85,20 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
             diskImageURL: diskImageURL,
             reportProgress: { [weak self] status in
                 self?.report(.provisioning(progress: status))
+            },
+            reportProblem: { [weak self] problem in
+                DispatchQueue.main.async {
+                    // A problem from a run that has since ended is stale.
+                    guard let self, self.isRunning, !self.isStopping else { return }
+                    log.notice("Guest problem: \(problem ?? "cleared", privacy: .public)")
+                    self.guestProblem = problem
+                    self.reportRunning()
+                }
             })
+    }
+
+    private func reportRunning() {
+        report(.running(homeAssistant: homeAssistantProgress, problem: guestProblem))
     }
 
     /// Delivers a state change on the main queue. Most transitions already
@@ -182,7 +207,10 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
             switch result {
             case .success:
                 self.isStarting = false
-                self.report(.running(homeAssistant: isFirstBoot ? .installing : .starting))
+                self.homeAssistantProgress = isFirstBoot ? .installing : .starting
+                self.guestProblem = nil
+                self.isStopping = false
+                self.reportRunning()
                 self.watchForHomeAssistant()
                 completion(.success(vm))
             case .failure(let error):
@@ -197,12 +225,13 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
     /// install is still installing on the boot after.
     private func watchForHomeAssistant() {
         webUIProbe.start { [weak self] sighting in
-            guard let self, self.isRunning else { return }
+            guard let self, self.isRunning, !self.isStopping else { return }
             switch sighting {
-            case .nothing: break
-            case .placeholder: self.report(.running(homeAssistant: .installing))
-            case .homeAssistant: self.report(.running(homeAssistant: .ready))
+            case .nothing: return
+            case .placeholder: self.homeAssistantProgress = .installing
+            case .homeAssistant: self.homeAssistantProgress = .ready
             }
+            self.reportRunning()
         }
     }
 
@@ -233,11 +262,12 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
     /// in a force stop, so the failure is only logged.
     func requestStop() {
         guard let vm = virtualMachine, vm.state == .running else { return }
+        isStopping = true
         report(.stopping)
         do {
             try vm.requestStop()
         } catch {
-            NSLog("Could not ask the guest to shut down: %@", error.localizedDescription)
+            log.error("Could not ask the guest to shut down: \(error.localizedDescription, privacy: .public)")
         }
     }
 

@@ -12,7 +12,10 @@ enum VMSettings {
     private static let memorySizeKey = "VMMemorySize"
 
     /// CPU cores given to the guest when the user hasn't chosen otherwise.
-    static let defaultCPUCount = 2
+    /// Four rather than two: the Supervisor, Home Assistant and a few
+    /// add-ons contend noticeably on two, and every supported Mac has cores
+    /// to spare. Clamped to the host's limit like any stored value.
+    static let defaultCPUCount = 4
 
     /// Memory given to the guest when the user hasn't chosen otherwise.
     static let defaultMemorySize: UInt64 = 4 * 1024 * 1024 * 1024 // 4 GiB

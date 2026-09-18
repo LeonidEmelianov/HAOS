@@ -67,13 +67,14 @@ final class MenuBarController {
 
     /// The icon mirrors the VM lifecycle: filled house once Home Assistant
     /// is up, power symbol while shutting down, dimmed for transitional and
-    /// off states.
+    /// off states — and for a running guest with a problem, which isn't
+    /// "up" in any sense the user cares about.
     private func updateIcon(for state: VMState) {
         guard let button = statusItem.button else { return }
         let symbol: String
         let dimmed: Bool
         switch state {
-        case .running(.ready):
+        case .running(.ready, nil):
             (symbol, dimmed) = ("house.fill", false)
         case .starting, .running:
             (symbol, dimmed) = ("house.fill", true)

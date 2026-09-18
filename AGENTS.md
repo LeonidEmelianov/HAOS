@@ -88,14 +88,17 @@ controller should need to change.
   mount, why the sleep assertion exists, why bridging skips interfaces with no
   link). Match that density; don't narrate the code.
 - **UserDefaults keys are load-bearing.** `VMCPUCount`, `VMMemorySize`,
-  `VMDiskSize`, `SharedFolderEnabled`, `SharedFolderPath`,
+  `VMDiskSize`, `NetworkMode`, `SharedFolderEnabled`, `SharedFolderPath`,
   `SharedFolderGuestPath`, `SharedFolderReadOnly` are what installed copies
   already store. Renaming one silently resets a user's settings.
 - **Errors the user will read** are `HAOSError("plain sentence")` — they land
   in the menu's status line or a start-failure alert. Don't invent new error
   domains and codes.
 - **State changes reach the UI on the main queue.** `VMController.report(_:)`
-  guarantees that; keep new call sites going through it.
+  guarantees that; keep new call sites going through it. A feature that
+  notices something wrong with the *running* guest (bridged DHCP going
+  unanswered) says so through `VMFeatureContext.reportProblem`, which takes
+  over the status line until cleared with nil.
 - Settings are written the moment a control changes (no OK button, per macOS
   convention) and take effect at the next VM start. The disk size is the one
   exception — growing the image can't be undone, so it waits for its Resize

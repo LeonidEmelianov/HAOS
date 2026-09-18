@@ -1,5 +1,6 @@
 import AppKit
 import ServiceManagement
+import os
 
 /// Ties the app together: keeps the VM running, feeds its state to the menu
 /// bar, and opens the windows the menu asks for. The app has no Dock icon or
@@ -60,7 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try SMAppService.mainApp.register()
         } catch {
-            NSLog("Login item registration failed: %@", error.localizedDescription)
+            log.error("Login item registration failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -110,12 +111,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// failure visible in the menu.
     private func scheduleStartRetry(after attempt: Int, error: Error) {
         guard attempt < Self.startRetryLimit else {
-            NSLog("Giving up starting the VM after %d attempts: %@",
-                  attempt, error.localizedDescription)
+            log.error("Giving up starting the VM after \(attempt) attempts: \(error.localizedDescription, privacy: .public)")
             return
         }
-        NSLog("VM start attempt %d failed (%@); retrying in %.0fs",
-              attempt, error.localizedDescription, Self.startRetryDelay)
+        log.notice("VM start attempt \(attempt) failed (\(error.localizedDescription, privacy: .public)); retrying in \(Int(Self.startRetryDelay))s")
         let retry = DispatchWorkItem { [weak self] in
             self?.pendingStartRetry = nil
             self?.startVM(userInitiated: false, attempt: attempt + 1)

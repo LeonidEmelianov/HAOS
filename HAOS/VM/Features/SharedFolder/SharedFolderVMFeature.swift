@@ -1,5 +1,6 @@
 import Foundation
 import Virtualization
+import os
 
 /// Shares a folder from the Mac with the guest over virtiofs.
 ///
@@ -23,8 +24,7 @@ final class SharedFolderVMFeature: VMFeature {
                 replacingPrefix: SharedFolderSettings.kernelParameterPrefix,
                 imagePath: context.diskImageURL.path)
         } catch {
-            NSLog("Could not update the guest's shared-folder mount: %@",
-                  error.localizedDescription)
+            log.error("Could not update the guest's shared-folder mount: \(error.localizedDescription, privacy: .public)")
         }
     }
 

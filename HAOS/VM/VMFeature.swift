@@ -36,8 +36,8 @@ extension VMFeature {
     func tearDown() {}
 }
 
-/// What a feature is handed at start: where its files live, and how to say
-/// what's taking so long.
+/// What a feature is handed at start: where its files live, how to say
+/// what's taking so long, and how to say what's wrong once the guest is up.
 struct VMFeatureContext {
     /// ~/Library/Application Support/HAOS — for state that has to survive a
     /// restart (firmware variables, the machine identifier, the vmnet
@@ -51,4 +51,9 @@ struct VMFeatureContext {
     /// Reports ready-to-display progress text while `prepare` runs, for the
     /// menu's status line. Called on the start queue, not the main queue.
     let reportProgress: (String) -> Void
+
+    /// Reports a problem with the running guest that the user can act on —
+    /// one the guest itself can't surface, because it has no way to reach
+    /// the user. nil clears it. May be called from any queue.
+    let reportProblem: (String?) -> Void
 }

@@ -1,13 +1,15 @@
 import AppKit
 
 /// Settings window for the VM's CPU count and memory size, plus whatever rows
-/// the features contribute (today, the disk and the shared folder).
+/// the features contribute (today, the disk, the network and the shared
+/// folder).
 /// Selections are written to UserDefaults immediately (no OK button, per
 /// macOS convention) and take effect the next time the VM starts.
 final class SettingsWindowController: NSWindowController {
     private let cpuPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let memoryPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let disk: DiskImageSettingsSection
+    private let network = NetworkSettingsSection()
     private let sharedFolder = SharedFolderSettingsSection()
 
     /// `vmIsIdle` tells the disk section whether the image may be grown on
@@ -29,6 +31,8 @@ final class SettingsWindowController: NSWindowController {
             .field(label: NSTextField(labelWithString: "Memory:"), control: memoryPopUp),
             .separator,
         ] + disk.rows + [
+            .separator,
+        ] + network.rows + [
             .separator,
         ] + sharedFolder.rows + [
             .separator,
@@ -60,6 +64,7 @@ final class SettingsWindowController: NSWindowController {
     func show() {
         populatePopUps()
         disk.refresh()
+        network.refresh()
         sharedFolder.refresh()
         showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)

@@ -1,5 +1,6 @@
 import Foundation
 import Virtualization
+import os
 
 /// Makes the guest act on the host's request to shut down.
 ///
@@ -61,7 +62,7 @@ final class PowerButtonVMFeature: VMFeature {
                 replacingPrefix: Self.kernelParameterPrefix,
                 imagePath: context.diskImageURL.path)
         } catch {
-            NSLog("Could not set up the guest's power button: %@", error.localizedDescription)
+            log.error("Could not set up the guest's power button: \(error.localizedDescription, privacy: .public)")
         }
     }
 

@@ -100,18 +100,24 @@ Click the menu bar icon:
 | Shut Down | Graceful shutdown (see [Clean shutdown](#clean-shutdown)) |
 | Show Console | Opens the guest's display in a window |
 | Open Web UI | Opens <http://homeassistant.local:8123> |
-| Settings… | CPU cores, memory, disk size and the shared folder |
+| Settings… | CPU cores, memory, disk size, network mode and the shared folder |
 | Quit | Shuts the guest down, then exits |
 
 The icon is a filled house while the VM is running and a dimmed outline otherwise.
 
 ## Settings
 
-CPU count and memory are adjustable and take effect the next time the VM starts. Defaults are **2 cores** and **4 GiB**; the floor is 2 GiB, below which the guest runs out of memory during onboarding. Both values are clamped to what `Virtualization.framework` reports the host allows, so a setting carried over from a bigger machine can't produce an invalid configuration.
+CPU count and memory are adjustable and take effect the next time the VM starts. Defaults are **4 cores** and **4 GiB**; the floor is 2 GiB, below which the guest runs out of memory during onboarding. Both values are clamped to what `Virtualization.framework` reports the host allows, so a setting carried over from a bigger machine can't produce an invalid configuration.
 
 ### Disk size
 
 The virtual disk is **48 GiB** by default and can be grown, in 16 GiB steps up to 256 GiB, with the **Resize** button. The image is grown right away while the VM is stopped and otherwise the next time it starts; either way Home Assistant OS expands its data partition into the new space on its next boot. A disk can't be made smaller — a raw image can't be cut down without losing the partitions at its end — so sizes below the current one are disabled, as are sizes beyond what's free on the Mac. The file is sparse, so growing it costs nothing until the guest actually writes.
+
+### Network
+
+**Bridged** by default: the guest is a device of its own on your network, with an address from your router, which is what device discovery needs. Some networks admit the Mac but not a second device behind it — corporate Wi-Fi with per-client DHCP policing, typically. There the guest boots, asks for an address forever and never gets one; nothing fails on the Mac, and Home Assistant's own diagnosis is a page on a web UI that has no address to be reached at. The app watches for exactly that: when the guest's DHCP requests have gone unanswered for 30 seconds, the menu's status line says *no DHCP reply on Wi-Fi (en0); this network may not allow bridging — try Shared networking in Settings*, and clears itself if a reply arrives later (after moving to another network, say).
+
+**Shared** puts the guest behind the Mac's own address instead (Virtualization.framework's NAT). It works wherever the Mac has a network, and <http://homeassistant.local:8123> still resolves from the Mac, but Home Assistant can't discover devices on the LAN and other devices can't reach it. The change takes effect at the next start; the guest keeps a stable address in each mode (a persisted vmnet interface ID for bridged, a persisted MAC for shared).
 
 ### Shared folder
 
@@ -147,7 +153,8 @@ So the app hands the guest a logind drop-in that turns the short press back on, 
 | `~/Library/HAOS/HAOS.img` | The guest disk image |
 | `~/Library/Application Support/HAOS/NVRAM` | EFI variable store |
 | `~/Library/Application Support/HAOS/MachineIdentifier` | VM machine identifier |
-| `~/Library/Application Support/HAOS/BridgedInterfaceID` | vmnet interface UUID (keeps the MAC stable) |
+| `~/Library/Application Support/HAOS/BridgedInterfaceID` | vmnet interface UUID (keeps the bridged MAC stable) |
+| `~/Library/Application Support/HAOS/SharedNetworkMACAddress` | The guest's MAC in shared mode (keeps its NAT address stable) |
 | `~/Library/Application Support/HAOS/logind.conf.d/` | The logind drop-in shared into the guest (see [Clean shutdown](#clean-shutdown)) |
 
 The disk image is created at a 48 GiB virtual size (adjustable in Settings) — Home Assistant expands its data partition to fill the disk on boot, and the Supervisor's containers don't fit in the ~6 GiB the stock image ships with. The file stays sparse on APFS, so it only occupies what the guest has actually written.
@@ -160,7 +167,7 @@ To start over, quit the app and delete both directories.
 
 **USB devices are not supported.** You cannot pass a Zigbee, Z-Wave or Matter USB stick through to the guest. `VZUSBDeviceConfiguration` requires a paid Apple Developer account to sign against, and it isn't wired up here regardless. Integrations that reach your devices over the network work fine — the bridged setup is specifically built for that — but anything needing a physical dongle will not. Use a network-attached coordinator (a Zigbee/Z-Wave-to-Ethernet bridge, or SkyConnect over a USB-to-IP server) instead.
 
-**Bridged mode only.** There is no NAT/shared-networking fallback. A start waits up to a minute for an interface with an active link — the app launches at login, often before Wi-Fi has associated — and begins the moment configd reports the link up, so the wait costs nothing once the network is there. An automatic start retries a few times beyond that, but with no usable interface the VM won't start.
+**No automatic fallback from bridged to shared.** A bridged start waits up to a minute for an interface with an active link — the app launches at login, often before Wi-Fi has associated — and begins the moment configd reports the link up, so the wait costs nothing once the network is there. An automatic start retries a few times beyond that, but with no usable interface the VM won't start. A network that has a link but won't answer the guest's DHCP is reported in the menu (see [Network](#network)), not switched around silently: losing LAN discovery is the user's call.
 
 **One VM, one image.** No snapshots, no multiple instances, no UTM import, and the image is never updated in place — Home Assistant updates itself from inside the guest, as usual.
 

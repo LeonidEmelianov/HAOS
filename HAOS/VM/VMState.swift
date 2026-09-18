@@ -11,7 +11,10 @@ enum VMState {
 
     /// The guest is up. `homeAssistant` is how far Home Assistant itself has
     /// got: the guest is on the network well before the web UI answers.
-    case running(homeAssistant: HomeAssistantProgress)
+    /// `problem`, when set, is something a feature noticed that keeps the
+    /// guest from working and the user can act on — bridged DHCP requests
+    /// going unanswered, say — and takes over the status line.
+    case running(homeAssistant: HomeAssistantProgress, problem: String? = nil)
 
     /// A graceful shutdown was requested and the guest is powering off.
     case stopping
@@ -29,10 +32,11 @@ enum VMState {
         switch self {
         case .provisioning(let progress): return progress
         case .starting: return "Starting…"
-        case .running(.installing):
+        case .running(_, let problem?): return "Running — \(problem)"
+        case .running(.installing, nil):
             return "Running — installing Home Assistant (first start; takes several minutes)"
-        case .running(.starting): return "Running — starting Home Assistant…"
-        case .running(.ready): return "Running"
+        case .running(.starting, nil): return "Running — starting Home Assistant…"
+        case .running(.ready, nil): return "Running"
         case .stopping: return "Stopping…"
         case .stopped(let error?): return "Stopped (error: \(error))"
         case .stopped(nil): return "Stopped"

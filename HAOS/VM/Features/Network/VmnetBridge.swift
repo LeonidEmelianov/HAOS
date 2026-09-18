@@ -22,6 +22,9 @@ final class VmnetBridge {
     struct Connection {
         let fileHandle: FileHandle
         let macAddress: VZMACAddress
+        /// The physical interface the guest is bridged onto, as the user
+        /// would recognise it: "Wi-Fi (en0)".
+        let hostInterface: String
     }
 
     /// All vmnet callbacks, socket reads and the shared packet buffer are
@@ -32,6 +35,8 @@ final class VmnetBridge {
     private var socketSource: DispatchSourceRead?
     private var packetBuffer: UnsafeMutableRawPointer?
     private var maxPacketSize = 0
+    private var dhcpWatch: DHCPWatch?
+    private var guestMAC: VZMACAddress?
 
     /// Starts a vmnet interface bridged onto the physical LAN and returns the
     /// VM's end of the socketpair for VZFileHandleNetworkDeviceAttachment.
@@ -52,8 +57,11 @@ final class VmnetBridge {
         _ = fcntl(hostSide, F_SETFL, fcntl(hostSide, F_GETFL) | O_NONBLOCK)
 
         let macAddress: VZMACAddress
+        let hostInterface: String
         do {
-            macAddress = try startInterface(interfaceID: interfaceID(stateDirectory: stateDirectory))
+            hostInterface = try Self.sharedInterfaceName()
+            macAddress = try startInterface(interfaceID: interfaceID(stateDirectory: stateDirectory),
+                                            sharedInterface: hostInterface)
         } catch {
             close(vmSide)
             close(hostSide)
@@ -62,6 +70,7 @@ final class VmnetBridge {
 
         hostSocket = hostSide
         packetBuffer = .allocate(byteCount: maxPacketSize, alignment: MemoryLayout<UInt>.alignment)
+        guestMAC = macAddress
 
         vmnet_interface_set_event_callback(interface!, .VMNET_INTERFACE_PACKETS_AVAILABLE, queue) {
             [weak self] _, _ in self?.forwardToGuest()
@@ -73,7 +82,19 @@ final class VmnetBridge {
         socketSource = source
 
         return Connection(fileHandle: FileHandle(fileDescriptor: vmSide, closeOnDealloc: true),
-                          macAddress: macAddress)
+                          macAddress: macAddress,
+                          hostInterface: Self.displayName(of: hostInterface))
+    }
+
+    /// Has `onOutcome` told, on the bridge's queue, when the guest's DHCP
+    /// requests go unanswered and when they get answered again. Frames
+    /// before this call aren't inspected; the guest hasn't booted yet when
+    /// the bridge is started, so nothing is missed by calling it right after.
+    func watchDHCP(onOutcome: @escaping (DHCPWatch.Outcome) -> Void) {
+        queue.async { [self] in
+            guard let guestMAC else { return }
+            dhcpWatch = DHCPWatch(guestMAC: guestMAC, queue: queue, onChange: onOutcome)
+        }
     }
 
     /// Stops the vmnet interface and releases the socketpair and buffers.
@@ -82,6 +103,11 @@ final class VmnetBridge {
         socketSource?.cancel() // the cancel handler closes hostSocket
         socketSource = nil
         hostSocket = -1
+        // On the queue, like every other touch of the watch.
+        queue.sync {
+            dhcpWatch?.cancel()
+            dhcpWatch = nil
+        }
         if let interface {
             let done = DispatchSemaphore(value: 0)
             vmnet_stop_interface(interface, queue) { _ in done.signal() }
@@ -96,10 +122,10 @@ final class VmnetBridge {
 
     /// Brings up the bridged vmnet interface, records the maximum packet size
     /// it hands back and returns the MAC address it assigned.
-    private func startInterface(interfaceID: UUID) throws -> VZMACAddress {
+    private func startInterface(interfaceID: UUID, sharedInterface: String) throws -> VZMACAddress {
         let desc = xpc_dictionary_create(nil, nil, 0)
         xpc_dictionary_set_uint64(desc, vmnet_operation_mode_key, UInt64(operating_modes_t.VMNET_BRIDGED_MODE.rawValue))
-        xpc_dictionary_set_string(desc, vmnet_shared_interface_name_key, try Self.sharedInterfaceName())
+        xpc_dictionary_set_string(desc, vmnet_shared_interface_name_key, sharedInterface)
         var uuid = interfaceID.uuid
         withUnsafeBytes(of: &uuid) {
             xpc_dictionary_set_uuid(desc, vmnet_interface_id_key,
@@ -155,6 +181,7 @@ final class VmnetBridge {
                 return packet.vm_pkt_size
             }
             guard frameSize > 0 else { return }
+            dhcpWatch?.sawFrameToGuest(buffer, length: frameSize)
             _ = send(hostSocket, buffer, frameSize, 0) // EAGAIN drops the frame
         }
     }
@@ -165,6 +192,7 @@ final class VmnetBridge {
         while true {
             let size = recv(hostSocket, buffer, maxPacketSize, 0)
             guard size > 0 else { return }
+            dhcpWatch?.sawFrameFromGuest(buffer, length: size)
             var iov = iovec(iov_base: buffer, iov_len: size)
             withUnsafeMutablePointer(to: &iov) { iovPointer in
                 var packet = vmpktdesc(vm_pkt_size: size, vm_pkt_iov: iovPointer,
@@ -251,6 +279,18 @@ final class VmnetBridge {
               let link = SCDynamicStoreCopyValue(store, "State:/Network/Interface/\(name)/Link" as CFString) as? [String: Any],
               let active = link["Active"] as? Bool else { return true }
         return active
+    }
+
+    /// "Wi-Fi (en0)": the name System Settings shows for the interface, with
+    /// the BSD name for anyone comparing against `ifconfig`.
+    private static func displayName(of bsdName: String) -> String {
+        for interface in SCNetworkInterfaceCopyAll() as? [SCNetworkInterface] ?? []
+        where SCNetworkInterfaceGetBSDName(interface) as String? == bsdName {
+            if let name = SCNetworkInterfaceGetLocalizedDisplayName(interface) as String? {
+                return "\(name) (\(bsdName))"
+            }
+        }
+        return bsdName
     }
 
     // MARK: - Support

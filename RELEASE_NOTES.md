@@ -1,3 +1,37 @@
+# HAOS 0.2.7
+
+Works on networks that won't bridge — corporate Wi-Fi, typically — and says so when that's the problem.
+
+## Added
+
+- **Shared networking.** Settings → Network now offers *Shared — through the Mac* next to the default *Bridged — on your network*. Shared puts the guest behind the Mac's own address (Virtualization.framework's NAT attachment), which works wherever the Mac has a network; <http://homeassistant.local:8123> still resolves from the Mac. The cost is what bridging exists for: Home Assistant can't discover devices on the LAN and other devices can't reach it, so bridged stays the default. The guest's MAC in shared mode is persisted (`~/Library/Application Support/HAOS/SharedNetworkMACAddress`) so its address stays put across restarts. Takes effect at the next start.
+
+- **The menu says when bridged DHCP gets no answer.** On a network that admits the Mac but not a second device behind it, a bridged guest boots, asks for an address forever and never gets one. Nothing fails on the Mac — the interface is up, frames flow — and Home Assistant's own diagnosis is a page on a web UI that has no address to be reached at; the menu sat on *installing Home Assistant* indefinitely. The bridge already sees every frame, so it now watches for the guest's DHCP requests going unanswered for 30 seconds and puts *no DHCP reply on Wi-Fi (en0); this network may not allow bridging — try Shared networking in Settings* in the status line, dimming the icon, until a reply arrives (after moving to another network, say). Only replies addressed to the guest count: with MAC NAT the guest also sees the LAN's broadcast offers to other clients.
+
+  Diagnosed on a corporate WLAN: the guest's Discovers left the Mac correctly translated to its (private) Wi-Fi address, and no Offer ever came back. Nothing the bridge does differently would change that; shared networking is the answer there.
+
+## Changed
+
+- **Four CPU cores by default, up from two.** The Supervisor, Home Assistant and a few add-ons contend noticeably on two. Applies to installs that never touched the CPU setting; a saved choice stays as it is, and the value is still clamped to what the Mac allows.
+
+- **The app logs through `os.Logger`** (subsystem `ru.mac.HAOS`) instead of `NSLog`, whose lines from this process never reached the unified log store — the retry and fallback messages the app has always written were unreadable after the fact. A start now also logs which interface it bridged onto (*Bridged onto Wi-Fi (en0)*), the first question to ask when the guest has no network. Read it with `log show --predicate 'subsystem == "ru.mac.HAOS"'`.
+
+- A running guest's state now carries an optional problem alongside Home Assistant's progress (`VMState.running(homeAssistant:problem:)`), raised and cleared by features through `VMFeatureContext.reportProblem`, so the web UI probe moving Home Assistant along doesn't overwrite a network diagnosis and vice versa.
+
+## Installing from the .dmg
+
+Requires **macOS 27 or later** on **Apple Silicon**. Download `HAOS-0.2.7.dmg` from this release, open it, and drag **HAOS** to **Applications**.
+
+The app is ad-hoc signed, not notarized, so Gatekeeper will refuse the downloaded copy until the quarantine flag is removed:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/HAOS.app
+```
+
+Then launch it once from Finder. Building from source with `make install` (see the [README](README.md)) avoids the quarantine step entirely.
+
+---
+
 # HAOS 0.2.6
 
 Shuts Home Assistant down properly. Until now every Quit and every *Shut Down* ended in a hard power-off.

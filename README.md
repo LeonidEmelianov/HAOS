@@ -25,7 +25,7 @@ https://github.com/user-attachments/assets/f0c7adba-33de-4805-9fd0-e745f56d1ffa
 - **Automatic first-run setup.** On first launch the app fetches the latest `haos_generic-aarch64` release from GitHub, unpacks it, and boots it. Nothing to download or convert yourself. The menu's status line follows the whole way — download, unpack, and the minutes the guest then spends installing Home Assistant — and only says *Running* once the web UI actually answers.
 - **Real LAN presence.** The guest is bridged onto your physical network via `vmnet.framework`, so it gets an address from your router's DHCP and participates in multicast — which is what mDNS, SSDP and Matter discovery need to find your devices.
 - **Stable address.** The vmnet interface ID is persisted, so the guest keeps the same MAC and therefore the same DHCP lease across restarts.
-- **A shared folder.** A folder you pick is shared into the guest over virtiofs and mounted as Home Assistant's backups, media or `/share` directory — read-only by default, or writable so backups land in the Finder, and in Time Machine, instead of inside the disk image. See [Shared folder](#shared-folder).
+- **A shared folder.** A folder you pick is shared into the guest over virtiofs and mounted as Home Assistant's backups, media or `/share` directory — so backups land in the Finder, and in Time Machine, instead of inside the disk image. Media and `/share` are read-only unless you say otherwise. See [Shared folder](#shared-folder).
 - **Console access.** "Show Console" opens the guest's framebuffer when you need to look at the boot log or use the HA CLI.
 - **Clean shutdown.** Quitting presses the guest's power button and waits up to 60 seconds for Home Assistant OS to power off properly before forcing it. Home Assistant OS's generic image ignores a short press out of the box — see [Clean shutdown](#clean-shutdown) for how the app gets around that.
 - **Stays awake.** While the VM runs, the app holds a power assertion so an idle host doesn't freeze the guest and drop your automations.
@@ -125,16 +125,16 @@ Off by default. Turn on **Share a folder with Home Assistant** — which asks yo
 
 | Use as | Guest directory | What you get |
 | --- | --- | --- |
-| Backups *(default)* | `/mnt/data/supervisor/backup` | Every backup Home Assistant writes — manual, automatic, or the one it takes before an update — lands on the Mac, deleting one in the Home Assistant UI deletes the file here, and a backup you drop into the folder shows up in Home Assistant, ready to restore. This use needs **read-only off**: the Supervisor unpacks a backup into a temporary directory next to the `.tar` before restoring, so on a read-only share backups are listed but can't be restored, and restoring needs as much free space in the folder as the backup itself. |
+| Backups *(default)* | `/mnt/data/supervisor/backup` | Every backup Home Assistant writes — manual, automatic, or the one it takes before an update — lands on the Mac, deleting one in the Home Assistant UI deletes the file here, and a backup you drop into the folder shows up in Home Assistant, ready to restore. This share is always writable: the backups are Home Assistant's own to write, and restoring one unpacks it into a temporary directory next to the `.tar`, which needs as much free space in the folder as the backup itself. |
 | Media | `/mnt/data/supervisor/media` | The folder shows up in Home Assistant's media browser. |
 | Share | `/mnt/data/supervisor/share` | The folder shows up as `/share`, which add-ons read — and write, with read-only off. |
 
-**Read-only** is on by default: Home Assistant sees the folder's contents but can't write to it, so a share can't rewrite or delete files on the Mac. Turn it off for the cases that need writing — anything to do with backups, including restoring one, or an add-on that writes into `/share`.
+**Read-only** is on by default for Media and Share: Home Assistant sees the folder's contents but can't write to it, so a share can't rewrite or delete files on the Mac. Turn it off for an add-on that writes into `/share`. It isn't offered for Backups — a folder Home Assistant can't write into isn't a backups folder: every scheduled backup would fail with *Read-only file system*, and none could be restored.
 
 Two things make that work, both applied the next time the VM starts:
 
-- The folder is offered to the guest as a **virtiofs** share tagged `haos-shared`, read-only unless you say otherwise.
-- `systemd.mount-extra=haos-shared:<guest directory>:virtiofs:ro,nofail` is added to the guest's kernel command line (`rw` when read-only is off), which mounts the share early enough that Docker and the Supervisor see it. The host side is what actually enforces the read-only share; the mount option only keeps the guest from asking for more.
+- The folder is offered to the guest as a **virtiofs** share tagged `haos-shared`, read-only when the setting says so.
+- `systemd.mount-extra=haos-shared:<guest directory>:virtiofs:ro,nofail` is added to the guest's kernel command line (`rw` for Backups, or when read-only is off), which mounts the share early enough that Docker and the Supervisor see it. The host side is what actually enforces the read-only share; the mount option only keeps the guest from asking for more.
 
 Nothing in Home Assistant OS mounts a virtiofs share on its own, and its root filesystem is read-only, so the kernel command line is the only durable place to ask for the mount. It lives in `cmdline.txt` on the image's FAT boot partition — the app edits it by attaching the image while the VM is stopped, and the RAUC update hook carries the file across Home Assistant OS updates. `nofail` keeps a guest that boots without the share from stalling.
 

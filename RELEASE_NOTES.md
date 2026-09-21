@@ -1,3 +1,27 @@
+# HAOS 0.2.9
+
+Backups shared to the Mac actually get written. With the defaults, Home Assistant couldn't put a single backup into the folder it was given for them.
+
+## Fixed
+
+- **A Backups share is always writable.** The defaults contradicted each other: a fresh share came up as *Use as: Backups* and *Read-only* at once, so Home Assistant saw the folder but couldn't write into it — every scheduled backup failed with `OSError: [Errno 30] Read-only file system` — and, since restoring unpacks a backup into a temporary directory next to the `.tar`, nothing could be restored from it either. The caption only mentioned restoring. Backups are Home Assistant's own to write, and a folder it can't write into isn't a backups folder, so a Backups share is now offered read-write whatever the checkbox says: under *Use as: Backups* it shows unchecked and disabled, with the caption saying why. Media and Share keep the choice, read-only by default as before, and the stored setting is left alone, so a choice made for Media survives switching to Backups and back. An existing Backups share picks this up at the next start; there's nothing to change in Settings.
+
+  Seen on a fresh 0.2.8 setup with the defaults untouched: the folder stayed empty, and the first automatic backup failed with the error above. After the fix the guest boots with `haos-shared:/mnt/data/supervisor/backup:virtiofs:rw` on its command line and a backup taken from the Home Assistant UI lands in the folder.
+
+## Installing from the .dmg
+
+Requires **macOS 27 or later** on **Apple Silicon**. Download `HAOS-0.2.9.dmg` from this release, open it, and drag **HAOS** to **Applications**.
+
+The app is ad-hoc signed, not notarized, so Gatekeeper will refuse the downloaded copy until the quarantine flag is removed:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/HAOS.app
+```
+
+Then launch it once from Finder. Building from source with `make install` (see the [README](README.md)) avoids the quarantine step entirely.
+
+---
+
 # HAOS 0.2.8
 
 Boots on M4 Macs. A fresh install on an M4 under macOS 27 never got past its first boot.

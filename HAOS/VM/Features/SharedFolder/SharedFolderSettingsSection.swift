@@ -80,7 +80,9 @@ final class SharedFolderSettingsSection {
         chooseButton.isEnabled = enabled
         guestFolderPopUp.isEnabled = enabled
         guestFolderPopUp.selectItem(withTitle: guestFolder.title)
-        readOnlyCheckbox.isEnabled = enabled
+        // A Backups share is never read-only (`GuestFolder.canBeReadOnly`),
+        // which the checkbox shows as off and not the user's to change.
+        readOnlyCheckbox.isEnabled = enabled && guestFolder.canBeReadOnly
         readOnlyCheckbox.state = readOnly ? .on : .off
         note.stringValue = Self.noteText(for: guestFolder, readOnly: readOnly)
 

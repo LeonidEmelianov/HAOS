@@ -31,18 +31,24 @@ enum SharedFolderSettings {
             }
         }
 
+        /// Whether the read-only choice applies to this folder. Backups are
+        /// Home Assistant's own to write — a scheduled backup into a read-only
+        /// share fails with an error every time it runs, and restoring one
+        /// unpacks it into a temporary directory next to the .tar — so a
+        /// Backups share is always writable. The choice is for folders the
+        /// guest only needs to look at.
+        var canBeReadOnly: Bool { self != .backup }
+
         /// What the folder is good for, for the caption under the popup. The
         /// read-only wording is spelled out per folder rather than tacked on as
-        /// a sentence: what the guest loses differs — backups it can neither
-        /// write nor restore (the Supervisor unpacks a backup into a temporary
-        /// directory next to the .tar, which a read-only share refuses), media
-        /// it can still play.
+        /// a sentence: what the guest loses differs — /share it can no longer
+        /// write to, media it can still play — and Backups, which can't be
+        /// read-only at all, says so right under the disabled checkbox.
         func summary(readOnly: Bool) -> String {
             switch (self, readOnly) {
-            case (.backup, false): return "Home Assistant writes its backups here, and restores from them."
-            case (.backup, true):
-                return "Home Assistant lists the backups here but can't restore them: "
-                    + "restoring unpacks the backup next to the file. Turn read-only off."
+            case (.backup, _):
+                return "Home Assistant writes its backups here and restores from them, "
+                    + "so the folder can't be read-only."
             case (.media, false): return "The folder shows up in Home Assistant's media browser."
             case (.media, true):
                 return "The folder shows up in Home Assistant's media browser, "
@@ -110,9 +116,15 @@ enum SharedFolderSettings {
     /// Whether the guest may only read the share. On by default, and read
     /// through `object(forKey:)` because `bool(forKey:)` can't tell an unset
     /// key from a stored `false`: a folder on the Mac is the user's, and the
-    /// guest shouldn't get write access to it without being told to.
+    /// guest shouldn't get write access to it without being told to. Picking
+    /// Backups is that telling: that share is never read-only, whatever is
+    /// stored, and the stored choice is left alone so the one made for
+    /// another folder survives a detour through Backups.
     static var isReadOnly: Bool {
-        get { UserDefaults.standard.object(forKey: readOnlyKey) as? Bool ?? true }
+        get {
+            guestFolder.canBeReadOnly
+                && (UserDefaults.standard.object(forKey: readOnlyKey) as? Bool ?? true)
+        }
         set { UserDefaults.standard.set(newValue, forKey: readOnlyKey) }
     }
 }

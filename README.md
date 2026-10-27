@@ -27,6 +27,7 @@ https://github.com/user-attachments/assets/f0c7adba-33de-4805-9fd0-e745f56d1ffa
 - **Stable address.** The vmnet interface ID is persisted, so the guest keeps the same MAC and therefore the same DHCP lease across restarts.
 - **A shared folder.** A folder you pick is shared into the guest over virtiofs and mounted as Home Assistant's backups, media or `/share` directory — so backups land in the Finder, and in Time Machine, instead of inside the disk image. Media and `/share` are read-only unless you say otherwise. See [Shared folder](#shared-folder).
 - **Console access.** "Show Console" opens the guest's framebuffer when you need to look at the boot log or use the HA CLI.
+- **The CLI from Terminal.** The Home Assistant CLI is also on a socket on the Mac, for a terminal session or a script — see [Command line from the Mac](#command-line-from-the-mac).
 - **Clean shutdown.** Quitting presses the guest's power button and waits up to 60 seconds for Home Assistant OS to power off properly before forcing it. Home Assistant OS's generic image ignores a short press out of the box — see [Clean shutdown](#clean-shutdown) for how the app gets around that.
 - **Stays awake.** While the VM runs, the app holds a power assertion so an idle host doesn't freeze the guest and drop your automations.
 
@@ -82,7 +83,7 @@ HAOS/
   Settings/  the Settings window and its grid
   Support/   small shared pieces (errors, sleep assertion, menu items)
   VM/        VMController, VM state, the VMFeature protocol
-    Features/DiskImage, Network, SharedFolder, PowerButton, NoSME, Display
+    Features/DiskImage, Network, SharedFolder, PowerButton, NoSME, SerialConsole, Display
 ```
 
 `VMController` builds only the bare machine — CPUs, memory, firmware. Everything else the guest has is a `VMFeature`: one folder holding that capability's settings, its host-side work, the devices it adds to the machine, and any UI of its own. Adding a capability means adding a folder and one line in `VMController.features`, not another branch in the controller.
@@ -95,7 +96,7 @@ Click the menu bar icon:
 
 | Item | What it does |
 | --- | --- |
-| *(status line)* | Current state — download progress, Starting…, Running, Stopping… |
+| *(status line)* | Current state — download progress, Starting…, Running, Stopping…, and while Home Assistant waits on the Supervisor, what the Supervisor is doing |
 | Start Home Assistant | Boots the VM (hidden while something is already in flight) |
 | Shut Down | Graceful shutdown (see [Clean shutdown](#clean-shutdown)) |
 | Show Console | Opens the guest's display in a window |
@@ -146,6 +147,24 @@ Whatever the guest already keeps in that directory isn't moved or deleted; it's 
 
 So the app hands the guest a logind drop-in that turns the short press back on, the same way it hands it the shared folder: a one-file directory on the Mac (`~/Library/Application Support/HAOS/logind.conf.d/haos.conf`, containing `HandlePowerKey=poweroff`) is offered as a read-only virtiofs share tagged `haos-logind`, and `systemd.mount-extra=haos-logind:/run/systemd/logind.conf.d:virtiofs:ro,nofail` on the kernel command line mounts it before logind starts. With that, a fresh guest is off about 15 seconds after the request. Without it — say, a guest started by another tool — the request is ignored and the 60-second force stop is what ends it.
 
+### Command line from the Mac
+
+The guest has a second console besides the one in the window: a virtio serial line (`hvc0` in the guest), which the app relays to a Unix socket at `~/Library/Application Support/HAOS/console.sock` while the VM runs. Home Assistant OS runs its CLI on `tty1` through a unit, `ha-cli@`, that works on any terminal, so the app asks for a second copy on `hvc0` with `systemd.wants=ha-cli@hvc0.service` on the kernel command line — and `systemd.mask=serial-getty@hvc0.service`, since systemd would otherwise put a login prompt on the same line. It's the same `ha >` prompt as in the window, emergency shell included, and it's there from the next VM start.
+
+For a session in Terminal (Ctrl-C quits):
+
+```sh
+stty -icanon -echo; nc -U ~/Library/Application\ Support/HAOS/console.sock; stty sane
+```
+
+For a script:
+
+```sh
+printf 'ha supervisor info\n' | nc -U -w 3 ~/Library/Application\ Support/HAOS/console.sock
+```
+
+Each connection is first shown the last 16 KB the console printed, so it starts with the prompt it's answering; several can be connected at once. The socket is readable by your user alone — the CLI it leads to runs as root in the guest.
+
 ### M4 Macs
 
 Apple's M4 and later have the Scalable Matrix Extension, Virtualization.framework shows it to the guest, and the guest's kernel turns it on — after which Home Assistant OS doesn't survive its own boot. System processes die of illegal instructions (the M4 has SME2 without the non-streaming SVE that code picked on the SME flag tends to assume), ext4 rejects block bitmaps that are fine on disk and writes back ones that aren't, and the boot sits on *Create System Files and Directories* forever. On a Mac with SME the app puts `arm64.nosme` on the guest's kernel command line — in `cmdline.txt`, the same way as the mounts above — so the kernel leaves the feature off and the guest is what it would be on an M1–M3. Home Assistant has no use for SME; nothing is lost.
@@ -160,6 +179,7 @@ Apple's M4 and later have the Scalable Matrix Extension, Virtualization.framewor
 | `~/Library/Application Support/HAOS/BridgedInterfaceID` | vmnet interface UUID (keeps the bridged MAC stable) |
 | `~/Library/Application Support/HAOS/SharedNetworkMACAddress` | The guest's MAC in shared mode (keeps its NAT address stable) |
 | `~/Library/Application Support/HAOS/logind.conf.d/` | The logind drop-in shared into the guest (see [Clean shutdown](#clean-shutdown)) |
+| `~/Library/Application Support/HAOS/console.sock` | The Home Assistant CLI, while the VM runs (see [Command line from the Mac](#command-line-from-the-mac)) |
 
 The disk image is created at a 48 GiB virtual size (adjustable in Settings) — Home Assistant expands its data partition to fill the disk on boot, and the Supervisor's containers don't fit in the ~6 GiB the stock image ships with. The file stays sparse on APFS, so it only occupies what the guest has actually written.
 

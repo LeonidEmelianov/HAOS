@@ -36,6 +36,7 @@ enum VMState {
         case .running(.installing, nil):
             return "Running — installing Home Assistant (first start; takes several minutes)"
         case .running(.starting, nil): return "Running — starting Home Assistant…"
+        case .running(.waitingForSupervisor(let activity), nil): return "Running — \(activity)"
         case .running(.ready, nil): return "Running"
         case .stopping: return "Stopping…"
         case .stopped(let error?): return "Stopped (error: \(error))"
@@ -79,6 +80,10 @@ enum HomeAssistantProgress {
 
     /// The Supervisor is bringing Home Assistant up.
     case starting
+
+    /// The Supervisor hasn't finished its own setup, and Home Assistant waits
+    /// on it. `activity` is ready-to-display text saying what it's doing.
+    case waitingForSupervisor(_ activity: String)
 
     /// The web UI answers.
     case ready

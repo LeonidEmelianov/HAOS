@@ -1,3 +1,41 @@
+# HAOS 0.3.0
+
+The Home Assistant CLI from Terminal, and a menu that says what Home Assistant is waiting on.
+
+## Added
+
+- **The CLI on a socket.** The guest gets a second console, a virtio serial line, and the app relays it to `~/Library/Application Support/HAOS/console.sock` while the VM runs. On it is the same `ha >` prompt as in the console window — Home Assistant OS's own `ha-cli@` unit, started on `hvc0` by `systemd.wants=ha-cli@hvc0.service` on the kernel command line, with `systemd.mask=serial-getty@hvc0.service` keeping a login prompt off the same line. A session in Terminal:
+
+  ```sh
+  stty -icanon -echo; nc -U ~/Library/Application\ Support/HAOS/console.sock; stty sane
+  ```
+
+  or one command from a script:
+
+  ```sh
+  printf 'supervisor info\n' | nc -U -w 3 ~/Library/Application\ Support/HAOS/console.sock
+  ```
+
+  Each connection first gets the last 16 KB the console printed, several can be connected at once, and the socket is readable by your user alone. The parameters are written at the next start; from then on the CLI is there on every normal boot.
+
+- **What the Supervisor is doing, in the menu.** Until the Supervisor finishes its setup it starts nothing, Home Assistant included, and the CLI answers only "System is not ready with state: setup". Setup waits out any app image it finds missing, and a large one on a slow line looks like a hang — restarting the guest only starts the download over. The status line now reads, for instance, *Running — the Supervisor is downloading music-assistant/server; Home Assistant starts once it's done*, read off the Observer the Supervisor serves on port 4357.
+
+  Seen on an M4: a Music Assistant image went missing, setup sat on downloading it for over an hour, and three restarts in six minutes used up GRUB's boot attempts, so the next boot landed in rescue mode (`systemd.unit=recovery.target`; `exit` at the prompt carries on). With this release the menu names the download instead of saying nothing.
+
+## Installing from the .dmg
+
+Requires **macOS 27 or later** on **Apple Silicon**. Download `HAOS-0.3.0.dmg` from this release, open it, and drag **HAOS** to **Applications**.
+
+The app is ad-hoc signed, not notarized, so Gatekeeper will refuse the downloaded copy until the quarantine flag is removed:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/HAOS.app
+```
+
+Then launch it once from Finder. Building from source with `make install` (see the [README](README.md)) avoids the quarantine step entirely.
+
+---
+
 # HAOS 0.2.9
 
 Backups shared to the Mac actually get written. With the defaults, Home Assistant couldn't put a single backup into the folder it was given for them.

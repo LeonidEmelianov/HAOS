@@ -29,6 +29,7 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
         SharedFolderVMFeature(),
         PowerButtonVMFeature(),
         NoSMEVMFeature(),
+        SerialConsoleVMFeature(),
         NetworkVMFeature(),
         DisplayVMFeature(),
     ]
@@ -40,6 +41,11 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
     /// Tells the menu when Home Assistant itself is up, which the guest
     /// running says nothing about.
     private lazy var webUIProbe = WebUIProbe(webUIURL: webUIURL)
+
+    /// Tells the menu when the Supervisor is what Home Assistant is waiting
+    /// for, through the Observer it serves next to the web UI.
+    private let supervisorProbe = SupervisorProbe(
+        observerURL: URL(string: "http://homeassistant.local:4357")!)
 
     /// Preparation and configuration run here rather than on a global queue:
     /// a first launch downloads several hundred MB on this thread, and that
@@ -55,6 +61,7 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
     /// change without losing the other: the web UI probe moves Home
     /// Assistant along while a feature raises or clears a problem.
     private var homeAssistantProgress: HomeAssistantProgress = .starting
+    private var supervisorActivity: String?
     private var guestProblem: String?
 
     /// True from a shutdown request until the guest is gone: the VM still
@@ -99,7 +106,8 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
     }
 
     private func reportRunning() {
-        report(.running(homeAssistant: homeAssistantProgress, problem: guestProblem))
+        let progress = supervisorActivity.map { .waitingForSupervisor($0) } ?? homeAssistantProgress
+        report(.running(homeAssistant: progress, problem: guestProblem))
     }
 
     /// Delivers a state change on the main queue. Most transitions already
@@ -209,6 +217,7 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
             case .success:
                 self.isStarting = false
                 self.homeAssistantProgress = isFirstBoot ? .installing : .starting
+                self.supervisorActivity = nil
                 self.guestProblem = nil
                 self.isStopping = false
                 self.reportRunning()
@@ -230,8 +239,16 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
             switch sighting {
             case .nothing: return
             case .placeholder: self.homeAssistantProgress = .installing
-            case .homeAssistant: self.homeAssistantProgress = .ready
+            case .homeAssistant:
+                self.homeAssistantProgress = .ready
+                self.supervisorActivity = nil
+                self.supervisorProbe.stop()
             }
+            self.reportRunning()
+        }
+        supervisorProbe.start { [weak self] activity in
+            guard let self, self.isRunning, !self.isStopping else { return }
+            self.supervisorActivity = activity
             self.reportRunning()
         }
     }
@@ -250,6 +267,7 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
     /// guest shutdown, error stop, force stop, failed start — ends here.
     private func releaseResources() {
         webUIProbe.stop()
+        supervisorProbe.stop()
         for feature in features {
             feature.tearDown()
         }

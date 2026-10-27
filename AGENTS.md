@@ -45,7 +45,7 @@ HAOS/
   Settings/  SettingsWindowController, SettingsGrid
   Support/   HAOSError, SleepAssertion, ClosureMenuItem
   VM/        VMController, VMState, VMSettings, VMFeature
-    Features/DiskImage, Network, SharedFolder, PowerButton, NoSME, Display
+    Features/DiskImage, Network, SharedFolder, PowerButton, NoSME, SerialConsole, Display
 ```
 
 `VMController` builds only the bare machine — CPU count, memory, firmware,
@@ -67,13 +67,15 @@ The contract, in `VM/VMFeature.swift`:
 
 All `prepare` calls run before any `configure`, each in the order
 `VMController.features` lists them. That order matters today: the disk image
-must be downloaded before `SharedFolderVMFeature`, `PowerButtonVMFeature` and
-`NoSMEVMFeature` can edit `cmdline.txt` inside it. Each feature that edits the
-command line owns one parameter, identified by a prefix that runs through its
+must be downloaded before `SharedFolderVMFeature`, `PowerButtonVMFeature`,
+`NoSMEVMFeature` and `SerialConsoleVMFeature` can edit `cmdline.txt` inside it.
+Each parameter on the command line belongs to one feature, identified by a
+prefix that runs through its
 virtiofs tag (`systemd.mount-extra=haos-shared:`,
 `systemd.mount-extra=haos-logind:`); a prefix that stopped short of the tag
 would delete the other feature's parameter; `arm64.nosme` takes no value and
-is its own prefix. (Growing the image leaves its GPT backup header in the
+is its own prefix, as are the serial console's two, which
+`setKernelParameters` writes in one attach of the image. (Growing the image leaves its GPT backup header in the
 wrong place until the guest's next boot fixes it, but `hdiutil` attaches such
 an image without complaint — verified on macOS 27 — which is what lets the
 Settings window grow it in place while the VM is stopped.)
@@ -131,3 +133,11 @@ controller should need to change.
   start queue for the duration and reports progress into the menu.
 - The app registers as a login item only when running from `/Applications`, so
   Debug builds don't add DerivedData paths to the user's login items.
+- The guest's CLI is reachable from the Mac at
+  `~/Library/Application Support/HAOS/console.sock` (`nc -U`), which is the
+  quickest way to run `ha …` against a live guest while debugging. The socket
+  path must stay under 104 bytes, the limit for a Unix socket's address.
+- "System is not ready with state: setup" from the CLI means the Supervisor
+  hasn't finished starting, and the menu says what it's waiting on (read off
+  the Observer at `homeassistant.local:4357`). A missing app image blocks setup
+  until it's downloaded; restarting the guest only starts the download over.

@@ -24,6 +24,13 @@ enum GuestBootConfig {
     static func setKernelParameter(_ parameter: String?,
                                    replacingPrefix prefix: String,
                                    imagePath: String) throws {
+        try setKernelParameters([(parameter, prefix)], imagePath: imagePath)
+    }
+
+    /// Several `setKernelParameter` edits for the price of one attach, for a
+    /// feature that owns more than one parameter.
+    static func setKernelParameters(_ edits: [(parameter: String?, prefix: String)],
+                                    imagePath: String) throws {
         let image = try attachImage(atPath: imagePath)
         defer { detach(image.wholeDisk) }
 
@@ -49,7 +56,9 @@ enum GuestBootConfig {
         }
 
         let current = (try? String(contentsOf: file, encoding: .utf8)) ?? ""
-        let updated = commandLine(current, replacingPrefix: prefix, with: parameter)
+        let updated = edits.reduce(current) { line, edit in
+            commandLine(line, replacingPrefix: edit.prefix, with: edit.parameter)
+        }
         guard updated != firstLine(of: current) else { return }
         // Non-atomically, so GRUB keeps reading the same file it always has.
         try (updated + "\n").write(to: file, atomically: false, encoding: .utf8)

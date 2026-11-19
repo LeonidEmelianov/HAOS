@@ -2,6 +2,7 @@ import Foundation
 import SystemConfiguration
 import Virtualization
 import vmnet
+import os
 
 /// Bridged networking via vmnet.framework, in-process.
 ///
@@ -40,7 +41,8 @@ final class VmnetBridge {
 
     /// Starts a vmnet interface bridged onto the physical LAN and returns the
     /// VM's end of the socketpair for VZFileHandleNetworkDeviceAttachment.
-    func start(stateDirectory: URL) throws -> Connection {
+    func start(stateDirectory: URL, cancellation: VMStartCancellation) throws -> Connection {
+        try cancellation.check()
         var fds: [Int32] = [0, 0]
         guard socketpair(AF_UNIX, SOCK_DGRAM, 0, &fds) == 0 else {
             throw HAOSError("socketpair() failed: \(String(cString: strerror(errno)))")
@@ -59,27 +61,29 @@ final class VmnetBridge {
         let macAddress: VZMACAddress
         let hostInterface: String
         do {
-            hostInterface = try Self.sharedInterfaceName()
+            hostInterface = try Self.sharedInterfaceName(cancellation: cancellation)
             macAddress = try startInterface(interfaceID: interfaceID(stateDirectory: stateDirectory),
-                                            sharedInterface: hostInterface)
+                                            sharedInterface: hostInterface, cancellation: cancellation)
         } catch {
             close(vmSide)
             close(hostSide)
             throw error
         }
 
-        hostSocket = hostSide
-        packetBuffer = .allocate(byteCount: maxPacketSize, alignment: MemoryLayout<UInt>.alignment)
-        guestMAC = macAddress
+        queue.sync {
+            hostSocket = hostSide
+            packetBuffer = .allocate(byteCount: maxPacketSize, alignment: MemoryLayout<UInt>.alignment)
+            guestMAC = macAddress
 
-        vmnet_interface_set_event_callback(interface!, .VMNET_INTERFACE_PACKETS_AVAILABLE, queue) {
-            [weak self] _, _ in self?.forwardToGuest()
+            vmnet_interface_set_event_callback(interface!, .VMNET_INTERFACE_PACKETS_AVAILABLE, queue) {
+                [weak self] _, _ in self?.forwardToGuest()
+            }
+            let source = DispatchSource.makeReadSource(fileDescriptor: hostSide, queue: queue)
+            source.setEventHandler { [weak self] in self?.forwardToHost() }
+            source.setCancelHandler { close(hostSide) }
+            source.resume()
+            socketSource = source
         }
-        let source = DispatchSource.makeReadSource(fileDescriptor: hostSide, queue: queue)
-        source.setEventHandler { [weak self] in self?.forwardToHost() }
-        source.setCancelHandler { close(hostSide) }
-        source.resume()
-        socketSource = source
 
         return Connection(fileHandle: FileHandle(fileDescriptor: vmSide, closeOnDealloc: true),
                           macAddress: macAddress,
@@ -97,32 +101,65 @@ final class VmnetBridge {
         }
     }
 
-    /// Stops the vmnet interface and releases the socketpair and buffers.
-    /// Safe to call more than once; blocks briefly while vmnet shuts down.
+    /// Detaches forwarding on its queue before stopping vmnet. A missing or
+    /// rejected stop callback cannot hold up app termination indefinitely.
     func stop() {
-        socketSource?.cancel() // the cancel handler closes hostSocket
-        socketSource = nil
-        hostSocket = -1
-        // On the queue, like every other touch of the watch.
-        queue.sync {
+        let interface: interface_ref? = queue.sync {
+            let interface = self.interface
+            self.interface = nil
+            if let interface {
+                vmnet_interface_set_event_callback(interface, .VMNET_INTERFACE_PACKETS_AVAILABLE, nil, nil)
+            }
+            socketSource?.cancel()
+            socketSource = nil
+            hostSocket = -1
             dhcpWatch?.cancel()
             dhcpWatch = nil
+            guestMAC = nil
+            packetBuffer?.deallocate()
+            packetBuffer = nil
+            return interface
         }
-        if let interface {
-            let done = DispatchSemaphore(value: 0)
-            vmnet_stop_interface(interface, queue) { _ in done.signal() }
-            done.wait() // also drains in-flight forwarding blocks on `queue`
+        guard let interface else { return }
+        let done = DispatchSemaphore(value: 0)
+        let status = vmnet_stop_interface(interface, queue) { result in
+            if result != .VMNET_SUCCESS {
+                log.error("Could not stop bridged interface: \(Self.describe(result), privacy: .public)")
+            }
+            done.signal()
         }
-        interface = nil
-        packetBuffer?.deallocate()
-        packetBuffer = nil
+        guard status == .VMNET_SUCCESS else {
+            log.error("Bridged interface stop was rejected: \(Self.describe(status), privacy: .public)")
+            return
+        }
+        if done.wait(timeout: .now() + 5) == .timedOut {
+            log.error("Timed out waiting for bridged interface shutdown")
+        }
     }
 
     // MARK: - vmnet interface
 
-    /// Brings up the bridged vmnet interface, records the maximum packet size
-    /// it hands back and returns the MAC address it assigned.
-    private func startInterface(interfaceID: UUID, sharedInterface: String) throws -> VZMACAddress {
+    /// Lives on the start attempt's queue, including after the caller has timed out.
+    /// The callback retains this attempt so a late success can still be stopped.
+    private final class InterfaceStart {
+        var interface: interface_ref?
+        var abandoned = false
+        var stopScheduled = false
+        var result: Result<(VZMACAddress, Int), Error>?
+
+        func abandon(on queue: DispatchQueue) {
+            abandoned = true
+            guard !stopScheduled, let interface else { return }
+            stopScheduled = vmnet_stop_interface(interface, queue) { status in
+                if status != .VMNET_SUCCESS {
+                    log.error("Could not stop abandoned bridged interface: \(status.rawValue)")
+                }
+            } == .VMNET_SUCCESS
+        }
+    }
+
+    private func startInterface(interfaceID: UUID, sharedInterface: String,
+                                cancellation: VMStartCancellation) throws -> VZMACAddress {
         let desc = xpc_dictionary_create(nil, nil, 0)
         xpc_dictionary_set_uint64(desc, vmnet_operation_mode_key, UInt64(operating_modes_t.VMNET_BRIDGED_MODE.rawValue))
         xpc_dictionary_set_string(desc, vmnet_shared_interface_name_key, sharedInterface)
@@ -133,34 +170,56 @@ final class VmnetBridge {
         }
 
         let done = DispatchSemaphore(value: 0)
-        var status = vmnet_return_t.VMNET_FAILURE
-        var mac: VZMACAddress?
-        var packetSize = 0
-        let interface = vmnet_start_interface(desc, queue) { result, params in
-            status = result
-            if let params {
-                if let cString = xpc_dictionary_get_string(params, vmnet_mac_address_key) {
-                    mac = VZMACAddress(string: String(cString: cString))
+        let attempt = InterfaceStart()
+        // A system authorization prompt can hold the start call itself. Its
+        // queue must not prevent teardown of the packet-forwarding queue.
+        let queue = DispatchQueue(label: "VmnetBridge.start")
+        queue.async {
+            attempt.interface = vmnet_start_interface(desc, queue) { status, params in
+                if status == .VMNET_SUCCESS, let params,
+                   let cString = xpc_dictionary_get_string(params, vmnet_mac_address_key),
+                   let mac = VZMACAddress(string: String(cString: cString)),
+                   xpc_dictionary_get_uint64(params, vmnet_max_packet_size_key) > 0 {
+                    attempt.result = .success((mac, Int(xpc_dictionary_get_uint64(params, vmnet_max_packet_size_key))))
+                } else {
+                    attempt.result = .failure(HAOSError("vmnet failed to start bridged interface: \(Self.describe(status))"))
                 }
-                packetSize = Int(xpc_dictionary_get_uint64(params, vmnet_max_packet_size_key))
+                if attempt.abandoned { attempt.abandon(on: queue) }
+                done.signal()
             }
-            done.signal()
-        }
-        guard let interface else {
-            throw HAOSError("vmnet_start_interface() rejected the configuration")
+            if attempt.interface == nil {
+                attempt.result = .failure(HAOSError("vmnet_start_interface() rejected the configuration"))
+                done.signal()
+            }
         }
         // vmnet_start_interface has been known to never call back on some
         // OS/hardware combinations, which would hang the start indefinitely.
         // Time out and surface an error instead.
-        guard done.wait(timeout: .now() + Self.interfaceStartTimeout) != .timedOut else {
-            throw HAOSError("bridged networking did not start: vmnet timed out bringing up the interface. Try a different network interface — a USB/Thunderbolt ethernet adapter, if you have one.")
+        let deadline = DispatchTime.now() + Self.interfaceStartTimeout
+        do {
+            while done.wait(timeout: .now() + 0.1) == .timedOut {
+                try cancellation.check()
+                if DispatchTime.now() >= deadline {
+                    throw HAOSError("Bridged networking timed out bringing up the interface. Try a different network interface — a USB/Thunderbolt ethernet adapter, if you have one.")
+                }
+            }
+            try cancellation.check()
+            let (mac, packetSize, interface) = try queue.sync {
+                guard let result = attempt.result, let interface = attempt.interface else {
+                    throw HAOSError("Bridged networking did not return an interface.")
+                }
+                let (mac, packetSize) = try result.get()
+                return (mac, packetSize, interface)
+            }
+            self.queue.sync {
+                self.interface = interface
+                self.maxPacketSize = packetSize
+            }
+            return mac
+        } catch {
+            queue.async { attempt.abandon(on: queue) }
+            throw error
         }
-        guard status == .VMNET_SUCCESS, let mac, packetSize > 0 else {
-            throw HAOSError("vmnet failed to start bridged interface: \(Self.describe(status))")
-        }
-        self.interface = interface
-        self.maxPacketSize = packetSize
-        return mac
     }
 
     /// How long to wait for `vmnet_start_interface` to call back before
@@ -171,7 +230,8 @@ final class VmnetBridge {
     /// ethernet frame. Runs on `queue`.
     private func forwardToGuest() {
         guard let interface, let buffer = packetBuffer else { return }
-        while true {
+        // Yield between batches so sustained traffic cannot starve teardown.
+        for _ in 0..<64 {
             var iov = iovec(iov_base: buffer, iov_len: maxPacketSize)
             let frameSize = withUnsafeMutablePointer(to: &iov) { iovPointer -> Int in
                 var packet = vmpktdesc(vm_pkt_size: maxPacketSize, vm_pkt_iov: iovPointer,
@@ -184,12 +244,13 @@ final class VmnetBridge {
             dhcpWatch?.sawFrameToGuest(buffer, length: frameSize)
             _ = send(hostSocket, buffer, frameSize, 0) // EAGAIN drops the frame
         }
+        queue.async { [weak self] in self?.forwardToGuest() }
     }
 
     /// guest → vmnet: drain the socket. Runs on `queue`.
     private func forwardToHost() {
         guard let interface, let buffer = packetBuffer else { return }
-        while true {
+        for _ in 0..<64 {
             let size = recv(hostSocket, buffer, maxPacketSize, 0)
             guard size > 0 else { return }
             dhcpWatch?.sawFrameFromGuest(buffer, length: size)
@@ -219,18 +280,19 @@ final class VmnetBridge {
     /// `interfaceWaitTimeout` for one to appear. Returns as soon as a
     /// candidate is live, so a machine that is already online pays nothing and
     /// one whose Wi-Fi is still associating starts the moment it finishes.
-    private static func sharedInterfaceName() throws -> String {
+    private static func sharedInterfaceName(cancellation: VMStartCancellation) throws -> String {
         let deadline = Date() + interfaceWaitTimeout
         // Created before the first check so a link coming up in between still
         // signals — the semaphore holds the wakeup rather than dropping it.
         let watcher = NetworkChangeWatcher()
         defer { watcher.stop() }
         while true {
+            try cancellation.check()
             if let name = liveBridgeableInterface() { return name }
             guard Date() < deadline else {
                 throw HAOSError("no physical interface with an active link available for bridged networking (waited \(Int(interfaceWaitTimeout))s for the network to come up)")
             }
-            watcher.waitForChange(until: min(deadline, Date() + interfaceRecheckInterval))
+            try watcher.waitForChange(until: min(deadline, Date() + interfaceRecheckInterval), cancellation: cancellation)
         }
     }
 

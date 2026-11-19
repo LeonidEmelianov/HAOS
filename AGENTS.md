@@ -29,9 +29,13 @@ Things that trip up a build:
   synced.
 - **Signing can't be skipped.** An unsigned bundle carries no entitlements and
   the VM refuses to start. Ad-hoc (`CODE_SIGN_IDENTITY="-"`) is enough.
-- There are **no tests**. Verification is a build plus, where it matters,
-  reasoning about the runtime path — or a small `swiftc` harness over a few
-  files for something like window layout.
+- There is no XCTest target. `make check` (`scripts/check-runtime.sh`)
+  compiles `HAOS/VM`, `Support` and `Settings` together with
+  `scripts/checks/RuntimeChecks.swift` and runs them: start cancellation and
+  cleanup, settings snapshots, console backpressure. It never boots a VM or
+  touches the user's disk image. Run it after touching the start/stop path or
+  the console; otherwise a build plus reasoning about the runtime path is the
+  check.
 
 The Xcode project uses a file-system-synchronized group: files and folders
 added under `HAOS/` are picked up automatically, and `project.pbxproj` does not
@@ -63,7 +67,16 @@ The contract, in `VM/VMFeature.swift`:
   clobber each other.
 - `tearDown()` — release host resources. Called on *every* stop path,
   including a start that failed halfway, so it must tolerate being called
-  twice and when the feature never started.
+  twice and when the feature never started. It runs on the same queue as
+  `prepare`, after preparation has finished, never on the main thread.
+
+`VMFeatureContext` carries a `VMSettingsSnapshot` taken when the start began:
+features read settings from it, never from `UserDefaults` directly, so a
+change made in Settings mid-start belongs to the next run and both halves of a
+feature (the boot parameter and the device) agree. It also carries a
+`VMStartCancellation`; anything in `prepare` that can wait (a download, a
+network wait, vmnet's start) polls it so Shut Down and Quit take effect during
+startup. Disk edits are left to finish their attach/write/detach.
 
 All `prepare` calls run before any `configure`, each in the order
 `VMController.features` lists them. That order matters today: the disk image

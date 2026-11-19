@@ -6,7 +6,7 @@ import os
 ///
 /// Two halves have to agree for that to work: the host offers the folder as a
 /// virtiofs device, and the guest mounts it. Both are driven from
-/// `SharedFolderSettings`, so they can't drift apart.
+/// one settings snapshot, so they can't drift apart during startup.
 final class SharedFolderVMFeature: VMFeature {
     /// Puts the guest's kernel command line in sync with the shared-folder
     /// setting. Offering the virtiofs device isn't enough — nothing in Home
@@ -19,8 +19,7 @@ final class SharedFolderVMFeature: VMFeature {
     func prepare(in context: VMFeatureContext) {
         do {
             try GuestBootConfig.setKernelParameter(
-                SharedFolderSettings.activeFolderURL == nil
-                    ? nil : SharedFolderSettings.kernelParameter,
+                context.settings.sharedFolder.kernelParameter,
                 replacingPrefix: SharedFolderSettings.kernelParameterPrefix,
                 imagePath: context.diskImageURL.path)
         } catch {
@@ -34,7 +33,7 @@ final class SharedFolderVMFeature: VMFeature {
     /// won't start.
     func configure(_ configuration: VZVirtualMachineConfiguration,
                    in context: VMFeatureContext) throws {
-        guard let url = SharedFolderSettings.activeFolderURL else { return }
+        guard let url = context.settings.sharedFolder.folderURL else { return }
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
 
         // Read-only is enforced here as well as in the guest's mount options:
@@ -42,7 +41,7 @@ final class SharedFolderVMFeature: VMFeature {
         // host allows, and only the second one holds if the guest remounts.
         let device = VZVirtioFileSystemDeviceConfiguration(tag: SharedFolderSettings.tag)
         device.share = VZSingleDirectoryShare(
-            directory: VZSharedDirectory(url: url, readOnly: SharedFolderSettings.isReadOnly))
+            directory: VZSharedDirectory(url: url, readOnly: context.settings.sharedFolder.readOnly))
         configuration.directorySharingDevices.append(device)
     }
 }

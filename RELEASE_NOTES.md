@@ -1,3 +1,29 @@
+# HAOS 0.3.1
+
+Quit works at any point in a start, and stopping no longer leaves the network interface or the disk half-handled.
+
+## Fixed
+
+- **Quitting while Home Assistant starts.** Until now Quit during a start exited at once, possibly in the middle of a first-launch download or an edit of the guest's boot partition. It now cancels the start: a download or a wait for the network stops, a boot-partition edit already under way finishes and detaches cleanly, and whatever the start had set up is released before the app reports Stopped or quits. A guest that was just booting is shut down the normal way.
+- **Quitting with a guest stuck in shutdown.** The guest gets 60 seconds to power off, then it is force-stopped. If even that is impossible, Quit still quits rather than leaving Force Quit as the only way out.
+- **Bridged networking teardown.** Packet forwarding is detached before vmnet is stopped, a stop vmnet never answers can no longer hang the app, and an interface vmnet finishes bringing up after the start gave up waiting (the one-time network authorization prompt, say) is stopped instead of leaked.
+- **Settings changed mid-start.** A start now uses the settings as they were when it began. A change made in Settings while it is still downloading or preparing the disk applies to the next start, and the shared folder's mount in the guest and the share on the Mac can no longer disagree.
+- **Console backpressure.** Input sent to `console.sock` while the guest isn't reading is held back in the client's socket instead of blocking the relay, so a stalled guest can't stall shutdown, and no input is lost.
+
+## Installing from the .dmg
+
+Requires **macOS 27 or later** on **Apple Silicon**. Download `HAOS-0.3.1.dmg` from this release, open it, and drag **HAOS** to **Applications**.
+
+The app is ad-hoc signed, not notarized, so Gatekeeper will refuse the downloaded copy until the quarantine flag is removed:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/HAOS.app
+```
+
+Then launch it once from Finder. Building from source with `make install` (see the [README](README.md)) avoids the quarantine step entirely.
+
+---
+
 # HAOS 0.3.0
 
 The Home Assistant CLI from Terminal, and a menu that says what Home Assistant is waiting on.

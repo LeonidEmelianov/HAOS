@@ -20,13 +20,14 @@ final class NetworkVMFeature: VMFeature {
     func configure(_ configuration: VZVirtualMachineConfiguration,
                    in context: VMFeatureContext) throws {
         let device = VZVirtioNetworkDeviceConfiguration()
-        switch NetworkSettings.mode {
+        switch context.settings.networkMode {
         case .bridged:
             let bridge = VmnetBridge()
             // Stored before anything can throw, so a failure further along
             // this start still gets the interface torn down.
             self.bridge = bridge
-            let connection = try bridge.start(stateDirectory: context.stateDirectory)
+            let connection = try bridge.start(stateDirectory: context.stateDirectory,
+                                              cancellation: context.cancellation)
             log.notice("Bridged onto \(connection.hostInterface, privacy: .public)")
             bridge.watchDHCP { outcome in
                 switch outcome {

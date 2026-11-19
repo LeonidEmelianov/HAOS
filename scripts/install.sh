@@ -28,12 +28,10 @@ readonly BUILD_DIR="${HOME}/Library/Caches/HAOS/DerivedData"
 DEST_DIR="${DEST_DIR:-/Applications}"
 readonly INSTALLED_APP="${DEST_DIR}/${APP_NAME}.app"
 
-# The project targets macOS 27 and cannot be built against an older SDK.
-readonly REQUIRED_SDK_MAJOR=27
-
-# Seconds to wait for a running instance to quit. The app shuts the guest down
-# over ACPI first, which its own terminate handler allows 30s for.
-readonly QUIT_TIMEOUT=60
+# Seconds to wait for a running instance to quit. The app gives the guest 60s
+# to shut down over ACPI before force-stopping it, then releases the network
+# interface; killing it sooner would cut that shutdown short.
+readonly QUIT_TIMEOUT=90
 
 launch_after_install=true
 install_after_build=true
@@ -50,29 +48,8 @@ log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
-# Finds a developer directory whose macOS SDK is new enough. Worth doing
-# rather than trusting `xcode-select -p`: that often still points at Command
-# Line Tools (which cannot build an .xcodeproj at all) or at a release Xcode
-# too old for this project, while Xcode 27 sits in Xcode-beta.app.
-find_developer_dir() {
-    local candidates=() candidate selected
-    [[ -n "${DEVELOPER_DIR:-}" ]] && candidates+=("$DEVELOPER_DIR")
-    selected="$(xcode-select -p 2>/dev/null || true)"
-    [[ -n "$selected" ]] && candidates+=("$selected")
-    candidates+=(
-        "/Applications/Xcode.app/Contents/Developer"
-        "/Applications/Xcode-beta.app/Contents/Developer"
-    )
-
-    for candidate in "${candidates[@]}"; do
-        [[ -d "$candidate" ]] || continue
-        compgen -G "${candidate}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX${REQUIRED_SDK_MAJOR}"'*.sdk' \
-            >/dev/null 2>&1 || continue
-        printf '%s' "$candidate"
-        return 0
-    done
-    return 1
-}
+# shellcheck source=lib/xcode.sh
+source "${PROJECT_DIR}/scripts/lib/xcode.sh"
 
 # Replacing the bundle underneath a running app corrupts it, so stop it first.
 quit_running_instance() {
@@ -95,11 +72,7 @@ quit_running_instance() {
     done
 }
 
-developer_dir="$(find_developer_dir)" || die \
-    "no Xcode with a macOS ${REQUIRED_SDK_MAJOR} SDK found. HAOS targets macOS
-       ${REQUIRED_SDK_MAJOR}, which needs Xcode ${REQUIRED_SDK_MAJOR}; Command Line Tools alone cannot
-       build it. Install Xcode ${REQUIRED_SDK_MAJOR} or point DEVELOPER_DIR at it."
-export DEVELOPER_DIR="$developer_dir"
+use_developer_dir
 log "Using $(xcodebuild -version | head -1) at ${DEVELOPER_DIR%/Contents/Developer}"
 
 log "Building ${APP_NAME} (Release, ad-hoc signed)…"

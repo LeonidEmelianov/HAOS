@@ -40,15 +40,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startVM(userInitiated: false)
     }
 
-    /// Reflects a VM state change in the menu, and finishes a quit that was
-    /// waiting on the guest.
+    /// Reflects a VM state change in the menu.
     private func apply(_ state: VMState) {
         vmState = state
         menuBar.update(for: state)
-        if isTerminating, state.isStopped {
-            isTerminating = false
-            NSApp.reply(toApplicationShouldTerminate: true)
-        }
     }
 
     /// Registers the app to start automatically at login (visible under
@@ -94,7 +89,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard vmState.canStart else { return }
         if userInitiated { cancelStartRetry() }
         vmController.start { [weak self] result in
-            guard let self, case .failure(let error) = result else { return }
+            guard let self, case .failure(let error) = result,
+                  !(error is CancellationError), !self.isTerminating else { return }
             guard userInitiated else {
                 self.scheduleStartRetry(after: attempt, error: error)
                 return
@@ -148,30 +144,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Termination
 
-    /// How long the guest gets to shut down cleanly before it's killed. A
-    /// restored instance with half a dozen add-ons measured 25 seconds, so 30
-    /// left no room; the extra only costs anything when the guest is hung.
-    private static let shutdownGracePeriod: TimeInterval = 60
-
-    /// Asks the guest to shut down cleanly before quitting; force stops after
-    /// a grace period. Either way the reply comes from `apply(_:)`, once the
-    /// VM reports itself stopped.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard vmController.isRunning else { return .terminateNow }
-
         cancelStartRetry()
+        guard vmController.isBusy else { return .terminateNow }
+        guard !isTerminating else { return .terminateLater }
         isTerminating = true
-        vmController.requestStop()
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.shutdownGracePeriod) { [weak self] in
-            guard let self, self.isTerminating else { return }
-            guard self.vmController.isRunning else {
-                // Neither running nor stopped: the guest is wedged partway
-                // through its shutdown, and the user asked to quit.
-                self.isTerminating = false
+        vmController.requestStop { [weak self] _ in
+            // Reply after this delegate call has returned .terminateLater,
+            // including when a stop request is rejected immediately. A guest
+            // that couldn't even be force-stopped is wedged partway through
+            // its shutdown; the user asked to quit, and refusing would leave
+            // Force Quit as the only way out.
+            DispatchQueue.main.async {
+                self?.isTerminating = false
                 NSApp.reply(toApplicationShouldTerminate: true)
-                return
             }
-            self.vmController.forceStop()
         }
         return .terminateLater
     }

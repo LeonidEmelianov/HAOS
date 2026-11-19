@@ -40,6 +40,11 @@ final class ConsoleRelay {
     }
 
     private var outputSource: DispatchSourceRead?
+    private var inputSource: DispatchSourceWrite?
+    private var pendingInput = Data()
+    private static let inputLimit = 64 * 1024
+    /// Whether client readers are suspended because `pendingInput` is full.
+    private var inputPaused = false
     private var listener: DispatchSourceRead?
     private var clients: [Int32: Client] = [:]
     private var scrollback = Data()
@@ -54,7 +59,9 @@ final class ConsoleRelay {
             fileHandleForWriting: guestOutput.fileHandleForWriting)
         // A write after the guest's side has closed must fail, not take the
         // app down with SIGPIPE.
-        _ = fcntl(guestInput.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+        let inputFD = guestInput.fileHandleForWriting.fileDescriptor
+        _ = fcntl(inputFD, F_SETNOSIGPIPE, 1)
+        _ = fcntl(inputFD, F_SETFL, fcntl(inputFD, F_GETFL) | O_NONBLOCK)
     }
 
     /// Starts draining the guest's output and listening on the socket. A
@@ -65,6 +72,8 @@ final class ConsoleRelay {
             let source = DispatchSource.makeReadSource(
                 fileDescriptor: guestOutput.fileHandleForReading.fileDescriptor, queue: queue)
             source.setEventHandler { [weak self] in self?.readFromGuest() }
+            let outputHandle = guestOutput.fileHandleForReading
+            source.setCancelHandler { withExtendedLifetime(outputHandle) {} }
             source.resume()
             outputSource = source
 
@@ -82,6 +91,9 @@ final class ConsoleRelay {
         queue.sync {
             outputSource?.cancel()
             outputSource = nil
+            inputSource?.cancel()
+            inputSource = nil
+            pendingInput.removeAll()
             if listener != nil {
                 listener?.cancel()
                 listener = nil
@@ -90,6 +102,7 @@ final class ConsoleRelay {
             for client in clients.keys {
                 disconnect(client)
             }
+            inputPaused = false
             scrollback.removeAll()
         }
     }
@@ -114,16 +127,56 @@ final class ConsoleRelay {
         }
     }
 
+    /// Input is queued rather than written blocking, so a stalled guest can't
+    /// stall the relay's queue (and with it teardown). Once the queue is full,
+    /// clients stop being read: the backlog stays in their sockets, and they
+    /// see ordinary backpressure instead of losing input or being dropped.
     private func writeToGuest(_ bytes: UnsafeRawBufferPointer) {
-        let fd = guestInput.fileHandleForWriting.fileDescriptor
-        var offset = 0
-        while offset < bytes.count {
-            let written = write(fd, bytes.baseAddress! + offset, bytes.count - offset)
+        pendingInput.append(contentsOf: bytes)
+        flushInput()
+    }
+
+    private func flushInput() {
+        let handle = guestInput.fileHandleForWriting
+        let fd = handle.fileDescriptor
+        while !pendingInput.isEmpty {
+            let written = pendingInput.withUnsafeBytes { write(fd, $0.baseAddress!, $0.count) }
             if written < 0 {
                 if errno == EINTR { continue }
-                return
+                if errno == EAGAIN {
+                    if inputSource == nil {
+                        let source = DispatchSource.makeWriteSource(fileDescriptor: fd, queue: queue)
+                        source.setEventHandler { [weak self] in self?.flushInput() }
+                        // A canceled source must release its descriptor before
+                        // the last FileHandle owner can close it.
+                        source.setCancelHandler { withExtendedLifetime(handle) {} }
+                        source.resume()
+                        inputSource = source
+                    }
+                    setClientsPaused(pendingInput.count >= Self.inputLimit)
+                    return
+                }
+                pendingInput.removeAll()
+                break
             }
-            offset += written
+            guard written > 0 else { break }
+            pendingInput.removeFirst(written)
+        }
+        inputSource?.cancel()
+        inputSource = nil
+        setClientsPaused(false)
+    }
+
+    /// Suspends or resumes every client's reader. Suspensions are balanced:
+    /// `disconnect` resumes a suspended reader before cancelling it, since
+    /// dispatch won't run the cancel handler (or allow the release) of a
+    /// suspended source.
+    private func setClientsPaused(_ paused: Bool) {
+        guard paused != inputPaused else { return }
+        inputPaused = paused
+        for client in clients.values {
+            guard let reader = client.reader else { continue }
+            if paused { reader.suspend() } else { reader.resume() }
         }
     }
 
@@ -188,6 +241,7 @@ final class ConsoleRelay {
             if state.disconnected { close(client) }
         }
         source.resume()
+        if inputPaused { source.suspend() }
         state.reader = source
         clients[client] = state
         send(scrollback, to: client)
@@ -199,8 +253,12 @@ final class ConsoleRelay {
         if count < 0, errno == EAGAIN || errno == EINTR { return }
         guard count > 0 else {
             // Nothing more to send, but the client may still be listening.
-            client.reader?.cancel()
-            client.reader = nil
+            if let reader = client.reader {
+                client.reader = nil
+                // An event delivered just before the pause; keep it balanced.
+                if inputPaused { reader.resume() }
+                reader.cancel()
+            }
             return
         }
         buffer[0..<count].withUnsafeBytes { writeToGuest($0) }
@@ -226,6 +284,7 @@ final class ConsoleRelay {
         client.disconnected = true
         if let reader = client.reader {
             client.reader = nil
+            if inputPaused { reader.resume() }
             reader.cancel()
         } else if client.readerCancelled {
             close(fd)

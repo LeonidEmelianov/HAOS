@@ -14,7 +14,7 @@ final class DiskImageVMFeature: VMFeature {
     func prepare(in context: VMFeatureContext) throws {
         guard !FileManager.default.fileExists(atPath: context.diskImageURL.path) else { return }
         try ImageDownloader(destination: context.diskImageURL)
-            .downloadLatestImage(progress: context.reportProgress)
+            .downloadLatestImage(cancellation: context.cancellation, progress: context.reportProgress)
     }
 
     func configure(_ configuration: VZVirtualMachineConfiguration,
@@ -23,7 +23,7 @@ final class DiskImageVMFeature: VMFeature {
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw HAOSError("Disk image not found at \(url.path)")
         }
-        try Self.grow(url, to: DiskImageSettings.size)
+        try Self.grow(url, to: context.settings.diskSize)
         let attachment = try VZDiskImageStorageDeviceAttachment(url: url, readOnly: false)
         configuration.storageDevices.append(VZVirtioBlockDeviceConfiguration(attachment: attachment))
     }

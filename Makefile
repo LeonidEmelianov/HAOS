@@ -4,10 +4,11 @@ DEST_DIR ?= /Applications
 # codesign and would sync every build artifact. See scripts/install.sh.
 BUILD_DIR := $(HOME)/Library/Caches/HAOS
 
-.PHONY: help build install dmg uninstall clean
+.PHONY: help build check install dmg uninstall clean
 
 help:
 	@echo "make build      Build Release, ad-hoc signed (no install)"
+	@echo "make check      Run the runtime regression checks (no VM booted)"
 	@echo "make install    Build and install to $(DEST_DIR), then relaunch"
 	@echo "make dmg        Build the release .dmg in $(BUILD_DIR)"
 	@echo "make uninstall  Remove $(DEST_DIR)/$(APP_NAME).app (leaves VM data)"
@@ -15,6 +16,9 @@ help:
 
 build:
 	@./scripts/install.sh --build-only
+
+check:
+	@./scripts/check-runtime.sh
 
 install:
 	@./scripts/install.sh

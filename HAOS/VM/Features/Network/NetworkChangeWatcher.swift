@@ -30,8 +30,13 @@ final class NetworkChangeWatcher {
     /// Waits for the next change or until `deadline`, whichever comes first.
     /// Signals accumulate, so a change that lands between a caller's check and
     /// its next wait returns immediately rather than being missed.
-    func waitForChange(until deadline: Date) {
-        _ = semaphore.wait(timeout: .now() + max(0, deadline.timeIntervalSinceNow))
+    func waitForChange(until deadline: Date, cancellation: VMStartCancellation) throws {
+        while true {
+            try cancellation.check()
+            let remaining = deadline.timeIntervalSinceNow
+            guard remaining > 0 else { return }
+            if semaphore.wait(timeout: .now() + min(0.1, remaining)) == .success { return }
+        }
     }
 
     /// Stops delivery and drains a callback that may already be running, so

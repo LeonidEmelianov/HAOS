@@ -75,6 +75,20 @@ Set your development team in the target's Signing & Capabilities tab, then build
 
 Build products go to `~/Library/Caches/HAOS`, deliberately outside the repo — this project is developed in a directory synced by iCloud Drive, where the file provider stamps extended attributes that make `codesign` fail with *"resource fork, Finder information, or similar detritus not allowed"*, and where build intermediates would otherwise be uploaded.
 
+### Regression checks
+
+`make build` verifies the Release build and its virtualization entitlement. A small
+runtime harness also checks startup cancellation and cleanup, settings snapshots,
+and console backpressure without booting a VM or opening your Home Assistant disk:
+
+```sh
+make check
+```
+
+It finds Xcode the same way `make build` does; set `DEVELOPER_DIR` to override.
+Quitting during startup cancels downloads and network waits, lets an active boot
+partition edit finish and detach, and then releases the prepared resources.
+
 ### Project layout
 
 ```

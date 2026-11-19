@@ -24,15 +24,7 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
     /// The machine's capabilities, in the order their host-side preparation
     /// runs: the disk image has to be downloaded before the shared folder can
     /// edit the guest's boot files inside it.
-    private let features: [VMFeature] = [
-        DiskImageVMFeature(),
-        SharedFolderVMFeature(),
-        PowerButtonVMFeature(),
-        NoSMEVMFeature(),
-        SerialConsoleVMFeature(),
-        NetworkVMFeature(),
-        DisplayVMFeature(),
-    ]
+    private let features: [VMFeature]
 
     /// Held while the VM runs, so the Mac doesn't idle-sleep out from under
     /// the guest.
@@ -68,36 +60,66 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
     /// reports itself running, but the status line says "Stopping…" and a
     /// late problem report mustn't take that back.
     private var isStopping = false
+    private var isCleaningUp = false
+    private var cancellation: VMStartCancellation?
+    private var runID = UUID()
+    private var shutdownTimeout: DispatchWorkItem?
+    private var stopCompletions: [(Result<Void, Error>) -> Void] = []
+
+    /// Includes preparation and cleanup, when the disk must still be left alone.
+    var isBusy: Bool { isStarting || virtualMachine != nil || isCleaningUp }
+
+    /// A restored guest with several add-ons needed 25 seconds; leave headroom.
+    private static let shutdownGracePeriod: TimeInterval = 60
 
     /// Persistent VM state (EFI variable store, machine identifier) lives in
     /// ~/Library/Application Support/HAOS/
-    private let stateDirectory: URL = {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory,
-                                            in: .userDomainMask)[0]
-        let dir = base.appendingPathComponent("HAOS", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }()
+    private let stateDirectory: URL
+    private let diskImageURL: URL
 
-    /// Where the Home Assistant OS disk image lives on the host.
-    private let diskImageURL = DiskImageVMFeature.imageURL
+    init(features: [VMFeature]? = nil, stateDirectory: URL? = nil,
+         diskImageURL: URL = DiskImageVMFeature.imageURL) {
+        self.features = features ?? [
+            DiskImageVMFeature(),
+            SharedFolderVMFeature(),
+            PowerButtonVMFeature(),
+            NoSMEVMFeature(),
+            SerialConsoleVMFeature(),
+            NetworkVMFeature(),
+            DisplayVMFeature(),
+        ]
+        self.stateDirectory = stateDirectory ?? FileManager.default.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("HAOS", isDirectory: true)
+        self.diskImageURL = diskImageURL
+        super.init()
+        try? FileManager.default.createDirectory(at: self.stateDirectory, withIntermediateDirectories: true)
+    }
 
-    /// True while the guest is up (not while starting, stopping or downloading).
+    /// Whether the framework still considers the guest running, including a graceful shutdown.
     var isRunning: Bool {
         virtualMachine?.state == .running
     }
 
-    private var featureContext: VMFeatureContext {
-        VMFeatureContext(
+    private func featureContext(settings: VMSettingsSnapshot,
+                                cancellation: VMStartCancellation) -> VMFeatureContext {
+        let runID = self.runID
+        return VMFeatureContext(
             stateDirectory: stateDirectory,
             diskImageURL: diskImageURL,
+            settings: settings,
+            cancellation: cancellation,
             reportProgress: { [weak self] status in
-                self?.report(.provisioning(progress: status))
+                DispatchQueue.main.async {
+                    guard let self, self.runID == runID, self.isStarting,
+                          !self.isStopping else { return }
+                    self.report(.provisioning(progress: status))
+                }
             },
             reportProblem: { [weak self] problem in
                 DispatchQueue.main.async {
                     // A problem from a run that has since ended is stale.
-                    guard let self, self.isRunning, !self.isStopping else { return }
+                    guard let self, self.runID == runID, self.isRunning, !self.isStopping else { return }
                     log.notice("Guest problem: \(problem ?? "cleared", privacy: .public)")
                     self.guestProblem = problem
                     self.reportRunning()
@@ -126,8 +148,8 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
     private func makeConfiguration(in context: VMFeatureContext) throws
         -> VZVirtualMachineConfiguration {
         let configuration = VZVirtualMachineConfiguration()
-        configuration.cpuCount = VMSettings.cpuCount
-        configuration.memorySize = VMSettings.memorySize
+        configuration.cpuCount = context.settings.cpuCount
+        configuration.memorySize = context.settings.memorySize
 
         let platform = VZGenericPlatformConfiguration()
         platform.machineIdentifier = machineIdentifier()
@@ -141,6 +163,7 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
         configuration.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]
 
         for feature in features {
+            try context.cancellation.check()
             try feature.configure(configuration, in: context)
         }
 
@@ -173,8 +196,16 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
     /// launch. `completion` is called once the guest is running or the attempt
     /// has failed; progress along the way arrives via `onStateChange`.
     func start(completion: @escaping (Result<VZVirtualMachine, Error>) -> Void) {
-        guard !isStarting, virtualMachine == nil else { return }
+        guard !isBusy else {
+            completion(.failure(HAOSError("Home Assistant is already starting, running or stopping.")))
+            return
+        }
         isStarting = true
+        isStopping = false
+        runID = UUID()
+        let cancellation = VMStartCancellation()
+        self.cancellation = cancellation
+        let context = featureContext(settings: VMSettingsSnapshot(), cancellation: cancellation)
         sleepAssertion.begin()
         report(.starting)
 
@@ -188,10 +219,11 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
                 // No image yet means this start downloads one, and the guest
                 // will spend its first boot installing Home Assistant.
                 let isFirstBoot = !FileManager.default.fileExists(atPath: self.diskImageURL.path)
-                let context = self.featureContext
                 for feature in self.features {
+                    try cancellation.check()
                     try feature.prepare(in: context)
                 }
+                try cancellation.check()
                 let configuration = try self.makeConfiguration(in: context)
                 DispatchQueue.main.async {
                     self.boot(configuration, isFirstBoot: isFirstBoot, completion: completion)
@@ -204,6 +236,10 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
 
     private func boot(_ configuration: VZVirtualMachineConfiguration, isFirstBoot: Bool,
                       completion: @escaping (Result<VZVirtualMachine, Error>) -> Void) {
+        guard cancellation?.isCancelled == false else {
+            failStart(CancellationError(), completion: completion)
+            return
+        }
         // Progress from a first-launch download has been sitting in the status
         // line; the machine is past that now.
         report(.starting)
@@ -212,10 +248,15 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
         vm.delegate = self
         virtualMachine = vm
         vm.start { [weak self] result in
-            guard let self else { return }
+            guard let self, self.virtualMachine === vm else { return }
             switch result {
             case .success:
                 self.isStarting = false
+                if self.isStopping {
+                    completion(.failure(CancellationError()))
+                    self.shutDown(vm)
+                    return
+                }
                 self.homeAssistantProgress = isFirstBoot ? .installing : .starting
                 self.supervisorActivity = nil
                 self.guestProblem = nil
@@ -257,32 +298,63 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
                            completion: @escaping (Result<VZVirtualMachine, Error>) -> Void) {
         isStarting = false
         virtualMachine = nil
-        releaseResources()
-        report(.failed(error: error.localizedDescription))
-        completion(.failure(error))
+        // Decided now: a stop asked for during cleanup didn't cause this
+        // failure, and mustn't hide it.
+        let cancelled = isStopping || error is CancellationError
+        releaseResources {
+            self.isStopping = false
+            self.report(cancelled ? .stopped(error: nil) : .failed(error: error.localizedDescription))
+            completion(.failure(cancelled ? CancellationError() : error))
+            self.completeStop(.success(()))
+        }
     }
 
-    /// Hands back everything a run holds: the features' host resources (the
-    /// vmnet interface, above all) and the sleep assertion. Every stop path —
-    /// guest shutdown, error stop, force stop, failed start — ends here.
-    private func releaseResources() {
+    /// Preparation and teardown share a queue, so cancellation never releases
+    /// resources while a feature is still using them. The UI stays responsive.
+    private func releaseResources(completion: @escaping () -> Void) {
+        isCleaningUp = true
+        shutdownTimeout?.cancel()
+        shutdownTimeout = nil
         webUIProbe.stop()
         supervisorProbe.stop()
-        for feature in features {
-            feature.tearDown()
+        startQueue.async {
+            for feature in self.features.reversed() {
+                feature.tearDown()
+            }
+            DispatchQueue.main.async {
+                self.sleepAssertion.end()
+                self.cancellation = nil
+                self.isCleaningUp = false
+                completion()
+            }
         }
-        sleepAssertion.end()
     }
 
-    /// Graceful shutdown: presses the guest's power button, which
-    /// `PowerButtonVMFeature` has taught Home Assistant OS to honor.
-    /// `onStateChange` reports `.stopped` once the guest is off; if the
-    /// request can't even be delivered, the caller's grace period still ends
-    /// in a force stop, so the failure is only logged.
-    func requestStop() {
-        guard let vm = virtualMachine, vm.state == .running else { return }
+    /// Menu shutdown and application termination use the same cancellation,
+    /// grace period and cleanup. Completion means the disk is no longer in use.
+    func requestStop(completion: @escaping (Result<Void, Error>) -> Void = { _ in }) {
+        guard isBusy else {
+            completion(.success(()))
+            return
+        }
+        stopCompletions.append(completion)
+        guard !isStopping else { return }
         isStopping = true
+        cancellation?.cancel()
         report(.stopping)
+        // Preparation finishes its current disk edit; an in-flight VZ start
+        // must finish before the framework accepts a stop request.
+        guard !isStarting, !isCleaningUp, let vm = virtualMachine else { return }
+        shutDown(vm)
+    }
+
+    private func shutDown(_ vm: VZVirtualMachine) {
+        let timeout = DispatchWorkItem { [weak self, weak vm] in
+            guard let self, let vm, self.virtualMachine === vm, self.isStopping else { return }
+            self.forceStop(vm)
+        }
+        shutdownTimeout = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.shutdownGracePeriod, execute: timeout)
         do {
             try vm.requestStop()
         } catch {
@@ -290,29 +362,64 @@ final class VMController: NSObject, VZVirtualMachineDelegate {
         }
     }
 
-    /// Kills the VM without giving the guest a chance to shut down. Used as
-    /// the last resort when a graceful shutdown times out. The stop is
-    /// reported through `onStateChange` like any other.
-    func forceStop() {
-        guard let vm = virtualMachine, vm.state == .running else { return }
-        vm.stop { [weak self] _ in self?.finishStop(error: nil) }
+    private func forceStop(_ vm: VZVirtualMachine) {
+        if vm.state == .stopped {
+            finishStop(error: nil)
+            return
+        }
+        guard vm.canStop else {
+            stopFailed(HAOSError("Home Assistant could not be stopped in its current state."))
+            return
+        }
+        vm.stop { [weak self, weak vm] error in
+            guard let self, let vm, self.virtualMachine === vm else { return }
+            if let error {
+                self.stopFailed(error)
+            } else {
+                self.finishStop(error: nil)
+            }
+        }
+    }
+
+    private func stopFailed(_ error: Error) {
+        shutdownTimeout?.cancel()
+        shutdownTimeout = nil
+        isStopping = false
+        guestProblem = "shutdown failed: \(error.localizedDescription); try Shut Down again"
+        reportRunning()
+        completeStop(.failure(error))
+    }
+
+    private func completeStop(_ result: Result<Void, Error>) {
+        let completions = stopCompletions
+        stopCompletions.removeAll()
+        for completion in completions { completion(result) }
     }
 
     private func finishStop(error: String?) {
+        guard !isCleaningUp else { return }
         virtualMachine = nil
-        releaseResources()
-        report(.stopped(error: error))
+        isStarting = false
+        isStopping = true
+        report(.stopping)
+        releaseResources {
+            self.isStopping = false
+            self.report(.stopped(error: error))
+            self.completeStop(.success(()))
+        }
     }
 
     // MARK: - VZVirtualMachineDelegate
 
     /// The guest powered itself off (e.g. shutdown from the HA UI).
     func guestDidStop(_ virtualMachine: VZVirtualMachine) {
+        guard self.virtualMachine === virtualMachine else { return }
         finishStop(error: nil)
     }
 
     /// The VM died with an error (crash, device failure).
     func virtualMachine(_ virtualMachine: VZVirtualMachine, didStopWithError error: Error) {
+        guard self.virtualMachine === virtualMachine else { return }
         finishStop(error: error.localizedDescription)
     }
 }

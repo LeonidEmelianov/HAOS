@@ -4,6 +4,23 @@ import Foundation
 /// it. Persisted in UserDefaults by the Settings window; read by
 /// `SharedFolderVMFeature` when the VM starts.
 enum SharedFolderSettings {
+    struct Snapshot {
+        let folderURL = SharedFolderSettings.activeFolderURL
+        let readOnly = SharedFolderSettings.isReadOnly
+        let guestFolder = SharedFolderSettings.guestFolder
+
+        /// Kernel parameter that has the guest's systemd mount the share at
+        /// boot, early enough that Docker and the Supervisor see it. `nofail`
+        /// keeps a guest whose share has gone away — sharing turned off, an
+        /// image moved to another Mac — from stalling its boot on a mount it
+        /// can't make. Nil when nothing is shared.
+        var kernelParameter: String? {
+            guard folderURL != nil else { return nil }
+            let access = readOnly ? "ro" : "rw"
+            return "\(SharedFolderSettings.kernelParameterPrefix)\(guestFolder.rawValue):virtiofs:\(access),nofail"
+        }
+    }
+
     private static let enabledKey = "SharedFolderEnabled"
     private static let pathKey = "SharedFolderPath"
     private static let guestFolderKey = "SharedFolderGuestPath"
@@ -65,15 +82,6 @@ enum SharedFolderSettings {
     /// other features mount their own `haos-` shares the same way, and each
     /// must leave the others' parameters alone.
     static let kernelParameterPrefix = "systemd.mount-extra=\(tag):"
-
-    /// Kernel parameter that has the guest's systemd mount the share at boot,
-    /// early enough that Docker and the Supervisor see it. `nofail` keeps a
-    /// guest whose share has gone away — sharing turned off, an image moved to
-    /// another Mac — from stalling its boot on a mount it can't make.
-    static var kernelParameter: String {
-        let access = isReadOnly ? "ro" : "rw"
-        return "systemd.mount-extra=\(tag):\(guestFolder.rawValue):virtiofs:\(access),nofail"
-    }
 
     /// Whether a folder on the Mac is shared with the guest. Off by default:
     /// turning it on hides whatever the guest already keeps in the directory

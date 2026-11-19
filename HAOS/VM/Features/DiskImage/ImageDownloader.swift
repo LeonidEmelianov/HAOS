@@ -16,6 +16,7 @@ final class ImageDownloader: NSObject, URLSessionDownloadDelegate {
     private var progress: ((String) -> Void)?
     private var completion: ((Result<Void, Error>) -> Void)?
     private var lastReportedPercent = -1
+    private var cancellation: VMStartCancellation?
 
     /// The session retains `self` as its delegate until
     /// `finishTasksAndInvalidate()` in `finish`, which keeps the downloader
@@ -39,14 +40,24 @@ final class ImageDownloader: NSObject, URLSessionDownloadDelegate {
     /// Callers are VM starts, which already run off the main thread. URLSession
     /// does its work on queues of its own, so nothing here waits on the
     /// caller's thread.
-    func downloadLatestImage(progress: @escaping (String) -> Void) throws {
+    func downloadLatestImage(cancellation: VMStartCancellation,
+                             progress: @escaping (String) -> Void) throws {
+        try cancellation.check()
+        self.cancellation = cancellation
         let done = DispatchSemaphore(value: 0)
         var outcome: Result<Void, Error> = .failure(HAOSError("The image download never finished"))
         downloadLatestImage(progress: progress) { result in
             outcome = result
             done.signal()
         }
-        done.wait()
+        while done.wait(timeout: .now() + 0.1) == .timedOut {
+            if cancellation.isCancelled {
+                // Keep the session valid until finish: the release callback
+                // may still be handing off to a newly created download task.
+                session.getAllTasks { tasks in tasks.forEach { $0.cancel() } }
+            }
+        }
+        try cancellation.check()
         try outcome.get()
     }
 
@@ -60,6 +71,10 @@ final class ImageDownloader: NSObject, URLSessionDownloadDelegate {
         progress("Finding latest release…")
         let task = session.dataTask(with: releasesAPI) { [weak self] data, _, error in
             guard let self else { return }
+            if self.cancellation?.isCancelled == true {
+                self.finish(.failure(CancellationError()))
+                return
+            }
             if let error {
                 self.finish(.failure(error))
                 return
@@ -124,6 +139,7 @@ final class ImageDownloader: NSObject, URLSessionDownloadDelegate {
 
             try? FileManager.default.removeItem(at: partial)
             try decompressXZ(from: compressed, to: partial)
+            try cancellation?.check()
 
             try? FileManager.default.removeItem(at: destination)
             try FileManager.default.moveItem(at: partial, to: destination)
@@ -171,6 +187,7 @@ final class ImageDownloader: NSObject, URLSessionDownloadDelegate {
         var flags: Int32 = 0
         var status = COMPRESSION_STATUS_OK
         while status == COMPRESSION_STATUS_OK {
+            try cancellation?.check()
             if stream.src_size == 0 && flags == 0 {
                 let chunk = try input.read(upToCount: bufferSize) ?? Data()
                 chunk.copyBytes(to: sourceBuffer, count: chunk.count)

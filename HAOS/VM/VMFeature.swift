@@ -27,7 +27,8 @@ protocol VMFeature: AnyObject {
 
     /// Releases whatever the feature is holding between runs. Called on every
     /// stop path, so it has to tolerate being called when the feature never
-    /// started and when it has already been torn down.
+    /// started and when it has already been torn down. Runs off the main
+    /// thread on the preparation queue, after preparation has finished.
     func tearDown()
 }
 
@@ -47,6 +48,9 @@ struct VMFeatureContext {
     /// The guest's disk image. Shared because more than one feature touches
     /// it: one downloads and attaches it, another edits the boot files inside.
     let diskImageURL: URL
+
+    let settings: VMSettingsSnapshot
+    let cancellation: VMStartCancellation
 
     /// Reports ready-to-display progress text while `prepare` runs, for the
     /// menu's status line. Called on the start queue, not the main queue.
